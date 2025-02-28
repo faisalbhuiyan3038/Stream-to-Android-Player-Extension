@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Stream to Android Player",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Detect streaming videos and open them in external Android video player",
   "author": "Faisal Bhuiyan",
   "browser_specific_settings": {
     "gecko": {
-      "id": "webtoandroid@example.com",
+      "id": "streamtoandroid@faisalbhuiyan.com",
       "strict_min_version": "109.0"
     },
     "gecko_android": {
@@ -21,13 +21,23 @@
     }
   },
   "background": {
-    "scripts": ["background.js"]
+    "scripts": [
+      "background.js"
+    ]
   },
-  "content_scripts": [{
-    "matches": ["<all_urls>"],
-    "css": ["styles.css"],
-    "js": ["content.js"]
-  }],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "css": [
+        "styles.css"
+      ],
+      "js": [
+        "content.js"
+      ]
+    }
+  ],
   "host_permissions": [
     "<all_urls>"
   ],

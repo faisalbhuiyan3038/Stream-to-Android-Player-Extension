@@ -1,3 +1,16 @@
+## Changelog
+
+### 1.0
+
+- Initial release
+- Detects streaming videos from many sites successfuly.
+- Fails in few sites.
+
+### 1.1
+
+- Added multiple streaming detection methods
+- Successfully detects streams from sites that were not detected in 1.0
+
 # Stream to Android Player Addon
 NOTE: THIS EXTENSION IS NOT MEANT FOR DESKTOP WINDOWS/MAC USERS. IT'S BUILT FOR ANDROID USERS.
 
