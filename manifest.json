@@ -6,7 +6,7 @@
   "author": "Faisal Bhuiyan",
   "browser_specific_settings": {
     "gecko": {
-      "id": "streamtoandroid@faisalbhuiyan.com",
+      "id": "faisalbhuiyan@mozilla",
       "strict_min_version": "109.0"
     },
     "gecko_android": {
