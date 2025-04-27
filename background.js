@@ -124,6 +124,55 @@ function extractVideoSources(tabId) {
   }).catch(console.error);
 }
 
+// Handle stream downloads
+async function handleStreamDownload(url, suggestedFilename) {
+  try {
+    // For m3u8 streams, we need to fetch the playlist first
+    if (url.includes('.m3u8')) {
+      // Send a message to notify that m3u8 downloads require a specialized downloader
+      browser.notifications.create({
+        type: 'basic',
+        iconUrl: '/icons/icon48.png',
+        title: 'M3U8 Stream Detected',
+        message: 'M3U8 streams require a specialized downloader. The URL has been copied to your clipboard.'
+      });
+      
+      // Copy the URL to clipboard
+      await navigator.clipboard.writeText(url);
+      return;
+    }
+
+    // For direct video URLs, use browser.downloads
+    let filename = suggestedFilename;
+    if (!filename.includes('.')) {
+      // Add appropriate extension based on content type
+      filename += '.mp4';
+    }
+
+    await browser.downloads.download({
+      url: url,
+      filename: filename,
+      saveAs: true
+    });
+  } catch (error) {
+    console.error('Download error:', error);
+    browser.notifications.create({
+      type: 'basic',
+      iconUrl: '/icons/icon48.png',
+      title: 'Download Error',
+      message: 'Failed to initiate download. Please try again.'
+    });
+  }
+}
+
+// Listen for download requests from content script
+browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'initiateDownload') {
+    handleStreamDownload(message.url, message.filename);
+  }
+  return true;
+});
+
 // Clear streams when tab is updated or removed
 browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === 'loading') {

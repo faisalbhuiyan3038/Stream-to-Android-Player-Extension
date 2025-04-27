@@ -29,8 +29,14 @@ function updateMenu() {
   const menu = document.getElementById('video-handler-menu') || createStreamMenu();
   menu.innerHTML = streams.map(stream => `
     <div class="stream-item" data-url="${stream.url}" title="${stream.name}">
-      ${stream.name}
-      ${stream.quality ? `<span class="quality-badge">${stream.quality}</span>` : ''}
+      <div class="stream-info">
+        ${stream.name}
+        ${stream.quality ? `<span class="quality-badge">${stream.quality}</span>` : ''}
+      </div>
+      <div class="stream-actions">
+        <button class="share-btn" title="Share">📤</button>
+        <button class="download-btn" title="Download">⬇️</button>
+      </div>
     </div>
   `).join('');
 
@@ -54,13 +60,53 @@ function updateMenu() {
         font-size: 12px;
         margin-left: 8px;
       }
+      .stream-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px;
+      }
+      .stream-info {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .stream-actions {
+        display: flex;
+        gap: 8px;
+        margin-left: 16px;
+      }
+      .share-btn, .download-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 4px;
+        font-size: 16px;
+        border-radius: 4px;
+        transition: background-color 0.2s;
+      }
+      .share-btn:hover, .download-btn:hover {
+        background-color: rgba(0,0,0,0.1);
+      }
     `;
     document.head.appendChild(styles);
   }
 
   menu.querySelectorAll('.stream-item').forEach(item => {
-    item.onclick = () => {
-      shareUrl(item.dataset.url);
+    const url = item.dataset.url;
+    item.querySelector('.share-btn').onclick = (e) => {
+      e.stopPropagation();
+      shareUrl(url);
+    };
+    item.querySelector('.download-btn').onclick = (e) => {
+      e.stopPropagation();
+      browser.runtime.sendMessage({
+        type: 'initiateDownload',
+        url: url,
+        filename: item.querySelector('.stream-info').textContent.trim()
+      });
     };
   });
 }
