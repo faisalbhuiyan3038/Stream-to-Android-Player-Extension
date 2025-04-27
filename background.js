@@ -13,6 +13,29 @@ function isStreamUrl(url) {
   return videoPatterns.some(pattern => url.toLowerCase().includes(pattern));
 }
 
+// Helper function to extract quality from URL or name
+function extractQuality(url, name) {
+  const qualityPatterns = [
+    { regex: /[^a-z](4320p|8k)[^a-z]/i, quality: '8K (4320p)' },
+    { regex: /[^a-z](2160p|4k)[^a-z]/i, quality: '4K (2160p)' },
+    { regex: /[^a-z](1440p|2k)[^a-z]/i, quality: '2K (1440p)' },
+    { regex: /[^a-z]1080p[^a-z]/i, quality: '1080p' },
+    { regex: /[^a-z]720p[^a-z]/i, quality: '720p' },
+    { regex: /[^a-z]480p[^a-z]/i, quality: '480p' },
+    { regex: /[^a-z]360p[^a-z]/i, quality: '360p' },
+    { regex: /[^a-z]240p[^a-z]/i, quality: '240p' },
+    { regex: /[^a-z]144p[^a-z]/i, quality: '144p' }
+  ];
+
+  const testString = `${url} ${name}`;
+  for (const pattern of qualityPatterns) {
+    if (pattern.regex.test(testString)) {
+      return pattern.quality;
+    }
+  }
+  return null;
+}
+
 // Helper function to check content type
 function isStreamContent(contentType) {
   const streamTypes = [
@@ -34,30 +57,45 @@ function extractVideoSources(tabId) {
 
         // Check video elements
         document.querySelectorAll('video').forEach(video => {
-          if (video.src) sources.push({
-            url: video.src,
-            type: 'video',
-            name: video.src.split('/').pop().split('?')[0]
-          });
+          if (video.src) {
+            const fileName = video.src.split('/').pop().split('?')[0];
+            const quality = extractQuality(video.src, fileName);
+            sources.push({
+              url: video.src,
+              type: 'video',
+              name: fileName,
+              quality: quality
+            });
+          }
 
           // Check source elements within video
           video.querySelectorAll('source').forEach(source => {
-            if (source.src) sources.push({
-              url: source.src,
-              type: source.type?.includes('m3u') ? 'm3u8' : 'video',
-              name: source.src.split('/').pop().split('?')[0]
-            });
+            if (source.src) {
+              const fileName = source.src.split('/').pop().split('?')[0];
+              const quality = extractQuality(source.src, fileName);
+              sources.push({
+                url: source.src,
+                type: source.type?.includes('m3u') ? 'm3u8' : 'video',
+                name: fileName,
+                quality: quality
+              });
+            }
           });
         });
 
         // Check data-source attributes (common for m3u8 players)
         document.querySelectorAll('[data-source]').forEach(el => {
           const source = el.getAttribute('data-source');
-          if (source) sources.push({
-            url: source,
-            type: source.includes('.m3u8') ? 'm3u8' : 'video',
-            name: source.split('/').pop().split('?')[0]
-          });
+          if (source) {
+            const fileName = source.split('/').pop().split('?')[0];
+            const quality = extractQuality(source, fileName);
+            sources.push({
+              url: source,
+              type: source.includes('.m3u8') ? 'm3u8' : 'video',
+              name: fileName,
+              quality: quality
+            });
+          }
         });
 
         return sources;
@@ -112,10 +150,12 @@ browser.webRequest.onHeadersReceived.addListener(
       const fileName = url.split('/').pop().split('?')[0];
 
       if (!streams.some(s => s.url === url)) {
+        const quality = extractQuality(url, fileName);
         streams.push({
           url,
           name: fileName,
-          type: contentType.includes('m3u') ? 'm3u8' : 'video'
+          type: contentType.includes('m3u') ? 'm3u8' : 'video',
+          quality: quality
         });
         detectedStreams.set(details.tabId, streams);
         browser.tabs.sendMessage(details.tabId, {
@@ -144,10 +184,13 @@ browser.webRequest.onBeforeRequest.addListener(
         if (content.trim().startsWith('#EXTM3U')) {
           let streams = detectedStreams.get(details.tabId) || [];
           if (!streams.some(s => s.url === details.url)) {
+            const fileName = details.url.split('/').pop().split('?')[0];
+            const quality = extractQuality(details.url, fileName);
             streams.push({
               url: details.url,
-              name: details.url.split('/').pop().split('?')[0],
-              type: 'm3u8'
+              name: fileName,
+              type: 'm3u8',
+              quality: quality
             });
             detectedStreams.set(details.tabId, streams);
             browser.tabs.sendMessage(details.tabId, {
