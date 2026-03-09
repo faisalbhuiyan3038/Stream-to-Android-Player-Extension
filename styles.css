@@ -13,35 +13,53 @@
   cursor: pointer;
   z-index: 999999;
   font-size: 24px;
-  transition: opacity 0.3s;
+  transition: opacity 0.3s, transform 0.2s;
 }
 
 #video-handler-button:hover {
   opacity: 1;
+  transform: scale(1.1);
 }
 
 #video-handler-menu {
   position: fixed;
   bottom: 80px;
   right: 20px;
-  background: rgba(0, 0, 0, 0.9);
-  border-radius: 8px;
-  padding: 8px;
+  background: rgba(15, 15, 25, 0.95);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 6px;
   z-index: 999998;
-  max-height: 300px;
+  max-height: 350px;
   overflow-y: auto;
   color: white;
-  max-width: 300px;
+  max-width: 320px;
+  min-width: 200px;
   width: auto;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* Scrollbar styling */
+#video-handler-menu::-webkit-scrollbar {
+  width: 4px;
+}
+#video-handler-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+#video-handler-menu::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
 }
 
 .stream-item {
-  padding: 8px 16px;
+  padding: 8px 12px;
   cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  transition: background 0.15s;
 }
 
 .stream-item:last-child {
@@ -49,5 +67,5 @@
 }
 
 .stream-item:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
 }

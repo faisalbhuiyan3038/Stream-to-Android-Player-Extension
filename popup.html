@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stream to Android Player</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <header class="popup-header">
+      <h1>🎬 Stream Player</h1>
+      <span id="stream-count" class="stream-count">0 streams</span>
+    </header>
+
+    <!-- Master toggle -->
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-title">Detection Enabled</span>
+        <span class="setting-desc">Master switch for stream detection</span>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="toggle-enabled" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <!-- Current site toggle -->
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-title">Active on this site</span>
+        <span class="setting-desc" id="current-domain">—</span>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="toggle-site" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <!-- Clean names toggle -->
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-title">Clean stream names</span>
+        <span class="setting-desc">Show readable names instead of raw URLs</span>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="toggle-clean-names" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <!-- Max streams slider -->
+    <div class="setting-row column">
+      <div class="setting-label">
+        <span class="setting-title">Max streams per tab</span>
+        <span class="setting-value" id="max-streams-value">50</span>
+      </div>
+      <input type="range" id="max-streams" min="10" max="100" step="5" value="50" class="slider">
+    </div>
+
+    <hr class="divider">
+
+    <!-- Whitelist -->
+    <div class="list-section">
+      <div class="list-header">
+        <span class="setting-title">Whitelist</span>
+        <span class="setting-desc">Always detect on these domains</span>
+      </div>
+      <textarea id="whitelist" class="domain-list" placeholder="example.com&#10;another-site.org" rows="3"></textarea>
+    </div>
+
+    <!-- Blacklist -->
+    <div class="list-section">
+      <div class="list-header">
+        <span class="setting-title">Blacklist</span>
+        <span class="setting-desc">Never detect on these domains</span>
+      </div>
+      <textarea id="blacklist" class="domain-list" placeholder="noisy-site.com&#10;ads.example.com" rows="3"></textarea>
+    </div>
+
+    <button id="save-lists" class="save-btn">Save Lists</button>
+
+    <footer class="popup-footer">
+      <span>v1.2</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
