@@ -35,7 +35,7 @@ const SKIP_PATTERNS = [
   'googlesyndication', 'doubleclick', 'googleadservices',
   'analytics', 'facebook.com/tr', 'pixel', 'beacon',
   'tracking', 'telemetry', '/ads/', 'pagead',
-  'data:',  'blob:', 'chrome-extension:', 'moz-extension:'
+  'data:', 'blob:', 'chrome-extension:', 'moz-extension:'
 ];
 
 function shouldSkipUrl(url) {
@@ -75,10 +75,10 @@ function isStreamContent(contentType) {
   if (!contentType) return false;
   const lower = contentType.toLowerCase();
   return lower.includes('video/') ||
-         lower.includes('application/x-mpegurl') ||
-         lower.includes('application/vnd.apple.mpegurl') ||
-         lower.includes('application/dash+xml') ||
-         (lower.includes('application/octet-stream') && false); // too broad, skip
+    lower.includes('application/x-mpegurl') ||
+    lower.includes('application/vnd.apple.mpegurl') ||
+    lower.includes('application/dash+xml') ||
+    (lower.includes('application/octet-stream') && false); // too broad, skip
 }
 
 // ─── Quality extraction ───────────────────────────────────────────────────────
@@ -133,9 +133,9 @@ function cleanStreamName(url) {
 function getStreamType(url, contentType) {
   const lower = url.toLowerCase();
   if (lower.includes('.m3u8') || lower.includes('.m3u') ||
-      (contentType && contentType.includes('mpegurl'))) return 'm3u8';
+    (contentType && contentType.includes('mpegurl'))) return 'm3u8';
   if (lower.includes('.mpd') ||
-      (contentType && contentType.includes('dash'))) return 'mpd';
+    (contentType && contentType.includes('dash'))) return 'mpd';
   if (lower.includes('.mp4')) return 'mp4';
   if (lower.includes('.ts')) return 'ts';
   return 'video';
@@ -144,6 +144,48 @@ function getStreamType(url, contentType) {
 function truncateText(text, maxLen) {
   if (!text || text.length <= maxLen) return text;
   return text.substring(0, maxLen - 1) + '…';
+}
+
+// ─── Intelligent duration extraction ──────────────────────────────────────────
+
+async function getStreamDuration(url, type) {
+  try {
+    if (type === 'm3u8') {
+      const response = await fetch(url, { method: 'GET' });
+      const text = await response.text();
+      // Simple SUM of all #EXTINF durations
+      let totalDuration = 0;
+      const regex = /#EXTINF:([\d.]+)/g;
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        totalDuration += parseFloat(match[1]);
+      }
+      return totalDuration > 0 ? totalDuration : null;
+    } else if (type === 'mpd') {
+      const response = await fetch(url, { method: 'GET' });
+      const text = await response.text();
+      // Match mediaPresentationDuration="PT1H2M3S"
+      const match = text.match(/mediaPresentationDuration="PT([^"]+)"/);
+      if (match) {
+        // Parse ISO 8601 duration
+        let seconds = 0;
+        const timeStr = match[1];
+        const hMatch = timeStr.match(/([\d.]+)H/);
+        const mMatch = timeStr.match(/([\d.]+)M/);
+        const sMatch = timeStr.match(/([\d.]+)S/);
+        if (hMatch) seconds += parseFloat(hMatch[1]) * 3600;
+        if (mMatch) seconds += parseFloat(mMatch[1]) * 60;
+        if (sMatch) seconds += parseFloat(sMatch[1]);
+        return seconds > 0 ? seconds : null;
+      }
+    } else {
+      // Direct video links are best parsed by content scripts
+      return null;
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
 }
 
 // ─── Domain helpers ───────────────────────────────────────────────────────────
@@ -186,13 +228,13 @@ function notifyContentScript(tabId) {
     browser.tabs.sendMessage(tabId, {
       type: "streamDetected",
       streams: streams
-    }).catch(() => {}); // Tab might be closed
+    }).catch(() => { }); // Tab might be closed
   }, 500));
 }
 
 // ─── Add a stream to a tab ───────────────────────────────────────────────────
 
-async function addStream(tabId, url, contentType) {
+async function addStream(tabId, url, contentType, duration = null) {
   if (!settings.enabled) return;
 
   let streams = detectedStreams.get(tabId) || [];
@@ -201,7 +243,14 @@ async function addStream(tabId, url, contentType) {
   if (streams.length >= settings.maxStreams) return;
 
   // Dedup check
-  if (streams.some(s => s.url === url)) return;
+  let existing = streams.find(s => s.url === url);
+  if (existing) {
+    if (duration > 0 && isFinite(duration) && !existing.duration) {
+      existing.duration = duration;
+      notifyContentScript(tabId);
+    }
+    return;
+  }
 
   // Get page title for context
   let pageTitle = '';
@@ -232,12 +281,21 @@ async function addStream(tabId, url, contentType) {
     displayName += ` #${dupeCount + 1}`;
   }
 
+  // Attempt smart duration fetch if none provided
+  if (!duration || isNaN(duration) || duration <= 0) {
+    const fetchedDuration = await getStreamDuration(url, streamType);
+    if (fetchedDuration && fetchedDuration > 0) {
+      duration = fetchedDuration;
+    }
+  }
+
   streams.push({
     url,
     name: rawName,
     displayName,
     type: streamType,
     quality,
+    duration: duration > 0 && isFinite(duration) ? duration : null,
     pageTitle: truncateText(pageTitle, 60)
   });
 
@@ -248,86 +306,51 @@ async function addStream(tabId, url, contentType) {
 // ─── Extract video sources from page DOM ──────────────────────────────────────
 
 function extractVideoSources(tabId) {
-  browser.tabs.executeScript(tabId, {
-    code: `
-      (function() {
-        let sources = [];
-        document.querySelectorAll('video').forEach(video => {
-          if (video.src && video.src.startsWith('http')) {
-            sources.push(video.src);
-          }
-          video.querySelectorAll('source').forEach(source => {
-            if (source.src && source.src.startsWith('http')) {
-              sources.push(source.src);
-            }
-          });
-        });
-        document.querySelectorAll('[data-source]').forEach(el => {
-          const src = el.getAttribute('data-source');
-          if (src && src.startsWith('http')) {
-            sources.push(src);
+  browser.scripting.executeScript({
+    target: { tabId: tabId },
+    func: () => {
+      let sources = [];
+      document.querySelectorAll('video').forEach(video => {
+        if (video.src && video.src.startsWith('http')) {
+          sources.push({ url: video.src, duration: video.duration });
+        }
+        video.querySelectorAll('source').forEach(source => {
+          if (source.src && source.src.startsWith('http')) {
+            sources.push({ url: source.src, duration: video.duration });
           }
         });
-        return sources;
-      })();
-    `
+      });
+      document.querySelectorAll('[data-source]').forEach(el => {
+        const src = el.getAttribute('data-source');
+        if (src && src.startsWith('http')) {
+          sources.push({ url: src, duration: null });
+        }
+      });
+      return sources;
+    }
   }).then(results => {
-    if (!results?.[0]) return;
-    for (const url of results[0]) {
+    if (!results?.[0]?.result) return;
+    for (const item of results[0].result) {
+      let url = typeof item === 'string' ? item : item.url;
+      let duration = typeof item === 'string' ? null : item.duration;
       if (!shouldSkipUrl(url) && isStreamUrl(url)) {
-        addStream(tabId, url, '');
+        addStream(tabId, url, '', duration);
       }
     }
   }).catch(() => {});
 }
 
-// ─── Handle stream downloads ─────────────────────────────────────────────────
-
-async function handleStreamDownload(url, suggestedFilename) {
-  try {
-    if (url.includes('.m3u8')) {
-      browser.notifications.create({
-        type: 'basic',
-        iconUrl: '/icons/icon48.png',
-        title: 'M3U8 Stream Detected',
-        message: 'M3U8 streams require a specialized downloader. The URL has been copied to your clipboard.'
-      });
-      await navigator.clipboard.writeText(url);
-      return;
-    }
-
-    let filename = suggestedFilename;
-    if (!filename.includes('.')) {
-      filename += '.mp4';
-    }
-
-    await browser.downloads.download({
-      url: url,
-      filename: filename,
-      saveAs: true
-    });
-  } catch (error) {
-    console.error('Download error:', error);
-    browser.notifications.create({
-      type: 'basic',
-      iconUrl: '/icons/icon48.png',
-      title: 'Download Error',
-      message: 'Failed to initiate download. Please try again.'
-    });
-  }
-}
-
 // ─── Message listener ─────────────────────────────────────────────────────────
 
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'initiateDownload') {
-    handleStreamDownload(message.url, message.filename);
-  } else if (message.type === 'videoSourcesFound' && sender.tab) {
+  if (message.type === 'videoSourcesFound' && sender.tab) {
     // From content script MutationObserver
     const tabId = sender.tab.id;
-    for (const url of (message.sources || [])) {
+    for (const item of (message.sources || [])) {
+      let url = typeof item === 'string' ? item : item.url;
+      let duration = typeof item === 'string' ? null : item.duration;
       if (!shouldSkipUrl(url) && isStreamUrl(url)) {
-        addStream(tabId, url, '');
+        addStream(tabId, url, '', duration);
       }
     }
   } else if (message.type === 'getStreams') {

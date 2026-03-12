@@ -27,6 +27,15 @@ function shareUrl(url) {
   }
 }
 
+function formatDuration(seconds) {
+  if (!seconds || isNaN(seconds) || seconds === Infinity) return '';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
 function updateMenu() {
   const menu = document.getElementById('video-handler-menu') || createStreamMenu();
 
@@ -37,12 +46,14 @@ function updateMenu() {
     <div class="stream-item" data-url="${stream.url}" title="${stream.url}">
       <div class="stream-info">
         <span class="stream-name">${escapeHtml(name)}</span>
-        ${stream.quality ? `<span class="quality-badge">${stream.quality}</span>` : ''}
+        <div class="stream-badges">
+          ${stream.quality ? `<span class="quality-badge">${stream.quality}</span>` : ''}
+          ${stream.duration ? `<span class="duration-badge">${formatDuration(stream.duration)}</span>` : ''}
+        </div>
         ${subtitle ? `<span class="stream-subtitle">${escapeHtml(subtitle)}</span>` : ''}
       </div>
       <div class="stream-actions">
         <button class="share-btn" title="Share">📤</button>
-        <button class="download-btn" title="Download">⬇️</button>
       </div>
     </div>`;
   }).join('');
@@ -83,16 +94,25 @@ function updateMenu() {
         text-overflow: ellipsis;
         white-space: nowrap;
       }
-      .quality-badge {
+      .stream-badges {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        margin-top: 2px;
+      }
+      .quality-badge, .duration-badge {
         display: inline-block;
-        background: #4CAF50;
         color: white;
         padding: 1px 5px;
         border-radius: 3px;
         font-size: 10px;
         font-weight: 600;
-        align-self: flex-start;
-        margin-top: 2px;
+      }
+      .quality-badge {
+        background: #4CAF50;
+      }
+      .duration-badge {
+        background: #2196F3;
       }
       .stream-actions {
         display: flex;
@@ -100,7 +120,7 @@ function updateMenu() {
         margin-left: 12px;
         flex-shrink: 0;
       }
-      .share-btn, .download-btn {
+      .share-btn {
         background: none;
         border: none;
         cursor: pointer;
@@ -109,7 +129,7 @@ function updateMenu() {
         border-radius: 4px;
         transition: background 0.15s;
       }
-      .share-btn:hover, .download-btn:hover {
+      .share-btn:hover {
         background: rgba(255,255,255,0.15);
       }
     `;
@@ -119,18 +139,15 @@ function updateMenu() {
   // Wire up buttons
   menu.querySelectorAll('.stream-item').forEach(item => {
     const url = item.dataset.url;
+    
+    // Restore tap-the-entire-item to share behavior
+    item.onclick = () => {
+      shareUrl(url);
+    };
+    
     item.querySelector('.share-btn').onclick = (e) => {
       e.stopPropagation();
       shareUrl(url);
-    };
-    item.querySelector('.download-btn').onclick = (e) => {
-      e.stopPropagation();
-      const name = item.querySelector('.stream-name').textContent.trim();
-      browser.runtime.sendMessage({
-        type: 'initiateDownload',
-        url: url,
-        filename: name
-      });
     };
   });
 }
@@ -167,14 +184,20 @@ function setupVideoObserver() {
     debounceTimer = setTimeout(() => {
       const sources = [];
       document.querySelectorAll('video').forEach(video => {
-        if (video.src && video.src.startsWith('http')) sources.push(video.src);
+        if (video.src && video.src.startsWith('http')) {
+          sources.push({ url: video.src, duration: video.duration });
+        }
         video.querySelectorAll('source').forEach(source => {
-          if (source.src && source.src.startsWith('http')) sources.push(source.src);
+          if (source.src && source.src.startsWith('http')) {
+            sources.push({ url: source.src, duration: video.duration });
+          }
         });
       });
       document.querySelectorAll('[data-source]').forEach(el => {
         const src = el.getAttribute('data-source');
-        if (src && src.startsWith('http')) sources.push(src);
+        if (src && src.startsWith('http')) {
+          sources.push({ url: src, duration: null });
+        }
       });
 
       if (sources.length > 0) {

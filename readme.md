@@ -1,20 +1,24 @@
 ## Changelog
-
+### 1.2
+- Fixed overheating, high resource usage issues.
+- Added better styling.
+- Added popup UI to configure settings.
+- Streams show duration (if found).
+### 1.1
+- Added multiple streaming detection methods
+- Successfully detects streams from sites that were not detected in 1.0
 ### 1.0
-
 - Initial release
 - Detects streaming videos from many sites successfuly.
 - Fails in few sites.
 
-### 1.1
-
-- Added multiple streaming detection methods
-- Successfully detects streams from sites that were not detected in 1.0
+# Store Link
+[Firefox addons](https://addons.mozilla.org/en-US/firefox/addon/stream-to-android-player/)
 
 # Stream to Android Player Addon
 NOTE: THIS EXTENSION IS NOT MEANT FOR DESKTOP WINDOWS/MAC USERS. IT'S BUILT FOR ANDROID USERS.
 
-This addon is available in the Edge Store too if you use Chromium.
+This addon is available in the Edge Store too (albeit with lower detection) if you use Chromium.
 
 ### What does this extension do?
 
