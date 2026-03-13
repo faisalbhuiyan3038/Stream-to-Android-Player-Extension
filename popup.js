@@ -4,6 +4,7 @@ const defaults = {
   enabled: true,
   cleanNames: true,
   maxStreams: 50,
+  useAndroidIntent: false,
   whitelist: [],
   blacklist: []
 };
@@ -14,11 +15,12 @@ let currentDomain = '';
 
 document.addEventListener('DOMContentLoaded', async () => {
   // Load settings
-  const result = await browser.storage.local.get('settings');
+  const result = await chrome.storage.local.get('settings');
   const settings = { ...defaults, ...(result.settings || {}) };
 
   // Populate UI
   document.getElementById('toggle-enabled').checked = settings.enabled;
+  document.getElementById('toggle-intent').checked = settings.useAndroidIntent;
   document.getElementById('toggle-clean-names').checked = settings.cleanNames;
   document.getElementById('max-streams').value = settings.maxStreams;
   document.getElementById('max-streams-value').textContent = settings.maxStreams;
@@ -27,7 +29,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Get current tab info
   try {
-    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tabs[0]) {
       const tab = tabs[0];
       const url = new URL(tab.url);
@@ -39,7 +41,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       document.getElementById('toggle-site').checked = !isBlacklisted;
 
       // Get stream count for this tab
-      const response = await browser.runtime.sendMessage({
+      const response = await chrome.runtime.sendMessage({
         type: 'getStreamCount',
         tabId: tab.id
       });
@@ -57,6 +59,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Master toggle
   document.getElementById('toggle-enabled').addEventListener('change', (e) => {
     saveSettings({ enabled: e.target.checked });
+  });
+
+  // Intent share toggle
+  document.getElementById('toggle-intent').addEventListener('change', (e) => {
+    saveSettings({ useAndroidIntent: e.target.checked });
   });
 
   // Clean names toggle
@@ -77,7 +84,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('toggle-site').addEventListener('change', async (e) => {
     if (!currentDomain) return;
 
-    const result = await browser.storage.local.get('settings');
+    const result = await chrome.storage.local.get('settings');
     const settings = { ...defaults, ...(result.settings || {}) };
     let blacklist = settings.blacklist || [];
 
@@ -123,13 +130,13 @@ function parseDomainList(text) {
 }
 
 async function saveSettings(partial) {
-  const result = await browser.storage.local.get('settings');
+  const result = await chrome.storage.local.get('settings');
   const current = { ...defaults, ...(result.settings || {}) };
   const updated = { ...current, ...partial };
-  await browser.storage.local.set({ settings: updated });
+  await chrome.storage.local.set({ settings: updated });
 
   // Also notify background script
-  browser.runtime.sendMessage({
+  chrome.runtime.sendMessage({
     type: 'updateSettings',
     settings: updated
   }).catch(() => {});

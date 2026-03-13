@@ -1,6 +1,23 @@
 let streams = [];
 let observer = null;
 let debounceTimer = null;
+let useAndroidIntent = false;
+
+// Load initial settings
+chrome.storage.local.get('settings').then(result => {
+  if (result.settings && result.settings.useAndroidIntent !== undefined) {
+    useAndroidIntent = result.settings.useAndroidIntent;
+  }
+});
+
+// Listen for settings changes
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.settings && changes.settings.newValue) {
+    if (changes.settings.newValue.useAndroidIntent !== undefined) {
+      useAndroidIntent = changes.settings.newValue.useAndroidIntent;
+    }
+  }
+});
 
 // Clear streams when page unloads
 window.addEventListener('beforeunload', () => {
@@ -21,9 +38,40 @@ function createStreamMenu() {
   return menu;
 }
 
-function shareUrl(url) {
-  if (navigator.share) {
-    navigator.share({ url }).catch(() => {});
+function shareUrl(url, name) {
+  let intentUrl = '';
+  try {
+    const urlObj = new URL(url);
+    const scheme = urlObj.protocol.replace(':', '');
+    const urlWithoutScheme = url.replace(/^https?:\/\//, '');
+    const titleExtra = name ? `S.title=${encodeURIComponent(name)};` : '';
+    intentUrl = `intent://${urlWithoutScheme}#Intent;scheme=${scheme};action=android.intent.action.VIEW;type=video/*;${titleExtra}end`;
+  } catch (e) {
+    intentUrl = `intent:#Intent;action=android.intent.action.VIEW;type=video/*;d=${encodeURIComponent(url)};end`;
+  }
+
+  const launchIntent = () => {
+    let iframe = document.getElementById('intent-launcher');
+    if (!iframe) {
+      iframe = document.createElement('iframe');
+      iframe.id = 'intent-launcher';
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
+    }
+    iframe.src = intentUrl;
+  };
+
+  if (useAndroidIntent) {
+    launchIntent();
+  } else {
+    if (navigator.share && window.isSecureContext) {
+      navigator.share({ url: url, title: name || '' }).catch(() => {
+        if (useAndroidIntent) launchIntent();
+      });
+    } else {
+      if (useAndroidIntent) launchIntent();
+      else alert('Web Share API blocked. Enable Android Share Fallback in popup to use Intent.');
+    }
   }
 }
 
@@ -139,15 +187,17 @@ function updateMenu() {
   // Wire up buttons
   menu.querySelectorAll('.stream-item').forEach(item => {
     const url = item.dataset.url;
+    const nameEl = item.querySelector('.stream-name');
+    const name = nameEl ? nameEl.textContent : '';
     
     // Restore tap-the-entire-item to share behavior
     item.onclick = () => {
-      shareUrl(url);
+      shareUrl(url, name);
     };
     
     item.querySelector('.share-btn').onclick = (e) => {
       e.stopPropagation();
-      shareUrl(url);
+      shareUrl(url, name);
     };
   });
 }
@@ -201,7 +251,7 @@ function setupVideoObserver() {
       });
 
       if (sources.length > 0) {
-        browser.runtime.sendMessage({
+        chrome.runtime.sendMessage({
           type: 'videoSourcesFound',
           sources: sources
         }).catch(() => {});
@@ -221,12 +271,20 @@ function setupVideoObserver() {
 
 // ─── Message listener ─────────────────────────────────────────────────────────
 
-browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "streamDetected") {
-    streams = message.streams;
-    const button = document.getElementById('video-handler-button') || createFloatingButton();
-    button.style.display = 'block';
-    updateMenu();
+    streams = message.streams || [];
+    const button = document.getElementById('video-handler-button');
+    const menu = document.getElementById('video-handler-menu');
+    
+    if (streams.length === 0) {
+      if (button) button.style.display = 'none';
+      if (menu) menu.style.display = 'none';
+    } else {
+      if (!button) createFloatingButton().style.display = 'block';
+      else button.style.display = 'block';
+      updateMenu();
+    }
   }
 });
 

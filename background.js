@@ -10,14 +10,14 @@ let settings = {
 };
 
 // Load settings on startup
-browser.storage.local.get('settings').then(result => {
+chrome.storage.local.get('settings').then(result => {
   if (result.settings) {
     settings = { ...settings, ...result.settings };
   }
 });
 
 // Listen for settings changes
-browser.storage.onChanged.addListener((changes, area) => {
+chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.settings) {
     settings = { ...settings, ...changes.settings.newValue };
   }
@@ -225,7 +225,7 @@ function notifyContentScript(tabId) {
     const streams = detectedStreams.get(tabId);
     if (!streams || streams.length === 0) return;
 
-    browser.tabs.sendMessage(tabId, {
+    chrome.tabs.sendMessage(tabId, {
       type: "streamDetected",
       streams: streams
     }).catch(() => { }); // Tab might be closed
@@ -255,7 +255,7 @@ async function addStream(tabId, url, contentType, duration = null) {
   // Get page title for context
   let pageTitle = '';
   try {
-    const tab = await browser.tabs.get(tabId);
+    const tab = await chrome.tabs.get(tabId);
     pageTitle = tab.title || '';
 
     // Check domain allowance
@@ -306,7 +306,7 @@ async function addStream(tabId, url, contentType, duration = null) {
 // ─── Extract video sources from page DOM ──────────────────────────────────────
 
 function extractVideoSources(tabId) {
-  browser.scripting.executeScript({
+  chrome.scripting.executeScript({
     target: { tabId: tabId },
     func: () => {
       let sources = [];
@@ -342,7 +342,7 @@ function extractVideoSources(tabId) {
 
 // ─── Message listener ─────────────────────────────────────────────────────────
 
-browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'videoSourcesFound' && sender.tab) {
     // From content script MutationObserver
     const tabId = sender.tab.id;
@@ -360,7 +360,7 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ settings });
   } else if (message.type === 'updateSettings') {
     settings = { ...settings, ...message.settings };
-    browser.storage.local.set({ settings });
+    chrome.storage.local.set({ settings });
   } else if (message.type === 'getStreamCount') {
     const tabId = message.tabId;
     const streams = detectedStreams.get(tabId) || [];
@@ -371,20 +371,23 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ─── Tab lifecycle ────────────────────────────────────────────────────────────
 
-browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.status === 'loading') {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status === 'loading' || changeInfo.url) {
     detectedStreams.delete(tabId);
     // Clear pending debounce
     if (pendingUpdates.has(tabId)) {
       clearTimeout(pendingUpdates.get(tabId));
       pendingUpdates.delete(tabId);
     }
-  } else if (changeInfo.status === 'complete') {
+    // Instruct content script to clear UI immediately upon navigation
+    chrome.tabs.sendMessage(tabId, { type: "streamDetected", streams: [] }).catch(() => {});
+  }
+  if (changeInfo.status === 'complete') {
     extractVideoSources(tabId);
   }
 });
 
-browser.tabs.onRemoved.addListener((tabId) => {
+chrome.tabs.onRemoved.addListener((tabId) => {
   detectedStreams.delete(tabId);
   if (pendingUpdates.has(tabId)) {
     clearTimeout(pendingUpdates.get(tabId));
@@ -394,7 +397,7 @@ browser.tabs.onRemoved.addListener((tabId) => {
 
 // ─── Web request listener (headers only, no re-fetching) ──────────────────────
 
-browser.webRequest.onHeadersReceived.addListener(
+chrome.webRequest.onHeadersReceived.addListener(
   (details) => {
     if (!settings.enabled) return;
     if (details.tabId < 0) return; // No tab context
@@ -417,7 +420,7 @@ browser.webRequest.onHeadersReceived.addListener(
 );
 
 // One-time scan when tab is activated (no interval)
-browser.tabs.onActivated.addListener(({ tabId }) => {
+chrome.tabs.onActivated.addListener(({ tabId }) => {
   if (settings.enabled) {
     extractVideoSources(tabId);
   }
