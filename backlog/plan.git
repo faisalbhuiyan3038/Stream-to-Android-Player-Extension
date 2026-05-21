@@ -1,0 +1,55 @@
+# Vidstack Web Player Integration
+
+This plan outlines the steps to integrate the Vidstack video player into the extension for the "Play in Browser" feature, setting up a foundation that allows adding more players in the future.
+
+## Open Questions
+
+> [!IMPORTANT]
+> **Build Tools and Bundling**
+> Because Chrome Extensions (Manifest V3) strictly block remote script execution for security reasons, we cannot just link to Vidstack's CDN inside the extension. We must download and bundle the Vidstack library locally. 
+> 
+> I will initialize a `package.json` in the extension root, install `vidstack` and `esbuild`, and set up a simple build command (`npm run build`) to generate a standalone `player.bundle.js` file. Is it acceptable to introduce Node/NPM build tools into this repository?
+
+## Proposed Changes
+
+### Setup NPM & Bundling
+- Run `npm init -y` to create a `package.json`.
+- Run `npm install vidstack` and `npm install -D esbuild`.
+- Add a build script: `"build": "esbuild src/player.js --bundle --minify --format=esm --outfile=player.bundle.js"`.
+
+### Create the Player Page
+
+#### [NEW] [player.html](file:///m:/.systemfile/Stream-to-Android-Player-Extension/player.html)
+- A new HTML page representing the "Play in Browser" tab.
+- Includes a `<media-player>` element and `<media-provider>`.
+- Includes Vidstack CSS files (which we will also bundle or copy locally).
+- Loads `player.bundle.js`.
+
+#### [NEW] [src/player.js](file:///m:/.systemfile/Stream-to-Android-Player-Extension/src/player.js)
+- Will import the required components from `vidstack` (like `VidstackPlayer`, `VidstackPlayerLayout`).
+- Will parse the `?url=` parameter from the URL querystring.
+- Will initialize the player with the target URL.
+
+### Background & Content Script Updates
+
+#### [MODIFY] [background.js](file:///m:/.systemfile/Stream-to-Android-Player-Extension/background.js)
+- Add a new message handler: `openWebPlayer`.
+- When triggered, it will use `browser.tabs.create({ url: browser.runtime.getURL('player.html?url=' + encodeURIComponent(message.url)) })`.
+- Introduce a setting `webPlayerEngine: 'vidstack'` to the default settings, paving the way for future players (e.g., Shaka).
+
+#### [MODIFY] [popup.html](file:///m:/.systemfile/Stream-to-Android-Player-Extension/popup.html) & [popup.js](file:///m:/.systemfile/Stream-to-Android-Player-Extension/popup.js)
+- Add a new dropdown in Desktop Settings for "Web Player Engine" (currently only "Vidstack" will be available).
+
+#### [MODIFY] [content.js](file:///m:/.systemfile/Stream-to-Android-Player-Extension/content.js)
+- Update the `handleAction('browser')` function to send the `openWebPlayer` message to the background script, instead of just using `window.open`.
+
+## Verification Plan
+
+### Automated / Build
+- Verify that running `npm run build` generates `player.bundle.js` without errors.
+
+### Manual Verification
+1. Open the popup, ensure "Play in Browser" icon is visible.
+2. Go to a streaming site, click the "▶️" icon.
+3. Verify that a new tab opens to `chrome-extension://[id]/player.html?url=...`.
+4. Verify the video starts playing and the Vidstack UI appears properly.

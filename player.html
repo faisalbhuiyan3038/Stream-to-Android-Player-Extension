@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web Player</title>
+  <link rel="stylesheet" href="player.bundle.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    #error-message {
+      color: #ff5252;
+      font-size: 16px;
+      padding: 24px;
+    }
+    media-player {
+      width: 100%;
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div id="error-message"></div>
+  <media-player playsinline crossorigin>
+    <media-outlet></media-outlet>
+    <media-community-skin></media-community-skin>
+  </media-player>
+
+  <script type="module" src="player.bundle.js"></script>
+</body>
+</html>

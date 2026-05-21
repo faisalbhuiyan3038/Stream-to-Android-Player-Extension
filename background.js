@@ -15,6 +15,7 @@ let settings = {
   showCopyIcon: true,
   showPlayIcon: true,
   defaultTapAction: 'default', // 'default' will map to 'share' on Android, 'copy' on Desktop
+  webPlayerEngine: 'vidstack',
   desktopExternalMethod: 'protocol',
   desktopProtocol: 'vlc://',
   externalPlayerPath: '',
@@ -377,6 +378,11 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const tabId = message.tabId;
     const streams = detectedStreams.get(tabId) || [];
     sendResponse({ count: streams.length });
+  } else if (message.type === 'openWebPlayer') {
+    const engine = settings.webPlayerEngine || 'vidstack';
+    const page = engine === 'shaka' ? 'player-shaka.html' : 'player.html';
+    const playerUrl = browser.runtime.getURL(page + '?url=' + encodeURIComponent(message.url));
+    browser.tabs.create({ url: playerUrl });
   } else if (message.type === 'openExternalPlayer') {
     handleOpenExternalPlayer(message.url);
   }

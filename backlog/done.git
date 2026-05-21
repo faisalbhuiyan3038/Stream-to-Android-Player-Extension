@@ -1,0 +1,38 @@
+# Desktop Features Walkthrough
+
+I have implemented the desktop optimization features as per your request! Here is a summary of what was accomplished:
+
+## Extension Updates
+- **Platform Detection:** Added logic in `background.js` to automatically detect if the extension is running on an Android device or a desktop.
+- **UI Enhancements (`popup.html` / `popup.js` / `popup.css`):**
+  - Added a new "Desktop Settings" section that is hidden on Android.
+  - Added toggles to show/hide the "Copy URL" and "Play in Browser" icons.
+  - Added a dropdown to control what clicking a stream row does (Share, Copy, Play in Browser, External Player).
+  - Added external player configurations.
+- **Content Script (`content.js`):**
+  - Stream items now dynamically show "📋" (Copy) and "▶️" (Play) icons on desktop, according to settings.
+  - Default row click is now handled perfectly, using standard Web Share API on Android, and falling back appropriately on Desktop.
+- **Background Handlers (`background.js`):**
+  - Added full support for the desktop external player integrations: 
+    - **Protocol Handlers:** Spawns tabs with protocols like `vlc://<url>` or `mpv://<url>`.
+    - **VLC HTTP Interface:** Connects directly to VLC via `fetch()` and Basic Auth using `http://localhost:8080/requests/status.xml?command=in_play&input=<url>`.
+    - **Native Messaging:** Uses `browser.runtime.sendNativeMessage` to talk to an installed python host script.
+- **Permissions:** Added `"nativeMessaging"` to `manifest.json`.
+
+## Native Messaging Host Scripts
+I created a `native-host` folder inside your extension directory with the necessary files for a user to install the host:
+- [host.py](file:///m:/.systemfile/Stream-to-Android-Player-Extension/native-host/host.py) - The Python script that parses the JSON length/messages and executes your media player using the provided path or falling back to `mpv`.
+- [host.bat](file:///m:/.systemfile/Stream-to-Android-Player-Extension/native-host/host.bat) - A bat script wrapper to make Windows execute `host.py` easily.
+- [install.bat](file:///m:/.systemfile/Stream-to-Android-Player-Extension/native-host/install.bat) - A simple install script for Windows users to register the application with Chrome/Edge/Firefox registries.
+- [uninstall.bat](file:///m:/.systemfile/Stream-to-Android-Player-Extension/native-host/uninstall.bat) - An uninstallation script to clean up registry entries.
+- **Manifests** - Built out JSON manifests tailored for both Firefox and Chromium-based browsers.
+
+### Note on Native Messaging setup
+> [!NOTE]
+> If you test the Native Messaging flow on Chromium (Chrome/Edge/Brave), you will need to open `chrome_manifest.json` and replace `<REPLACE_WITH_YOUR_EXTENSION_ID>` with the actual Extension ID string once it is loaded unpacked. Then run `install.bat`. For Firefox, it's already configured to use the ID specified in `manifest.json` (`faisalbhuiyan@mozilla`).
+
+## Web Player Integration (Vidstack)
+- **Bundling Setup:** Added a `package.json` to the extension directory. Installed `vidstack` and `esbuild` as dependencies to locally bundle the player. Run `npm run build` anytime you modify `src/player.js`.
+- **Player Interface:** Created `player.html` and `src/player.js`. This creates a fully functioning local web player tab out of the box using Vidstack's Web Components.
+- **Settings:** Added a "Web Player Engine" setting in the popup, paving the way for adding other engines in the future.
+- **Behavior:** Clicking the "Play in Browser" icon (▶️) now correctly asks the background script to open `player.html` with the stream URL in a new tab.

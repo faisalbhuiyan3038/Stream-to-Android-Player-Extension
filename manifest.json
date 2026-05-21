@@ -50,7 +50,9 @@
     "downloads",
     "notifications",
     "clipboardWrite",
-    "storage",
+    "storage"
+  ],
+  "optional_permissions": [
     "nativeMessaging"
   ],
   "icons": {

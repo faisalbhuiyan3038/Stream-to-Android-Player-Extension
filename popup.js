@@ -9,6 +9,7 @@ const defaults = {
   showCopyIcon: true,
   showPlayIcon: true,
   defaultTapAction: 'default',
+  webPlayerEngine: 'vidstack',
   desktopExternalMethod: 'protocol',
   desktopProtocol: 'vlc://',
   externalPlayerPath: '',
@@ -39,27 +40,77 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('toggle-copy-icon').checked = settings.showCopyIcon;
     document.getElementById('toggle-play-icon').checked = settings.showPlayIcon;
     document.getElementById('default-action').value = settings.defaultTapAction;
+    document.getElementById('web-player-engine').value = settings.webPlayerEngine;
     document.getElementById('external-method').value = settings.desktopExternalMethod;
     document.getElementById('desktop-protocol').value = settings.desktopProtocol;
     document.getElementById('external-player-path').value = settings.externalPlayerPath;
     document.getElementById('vlc-http-password').value = settings.vlcHttpPassword;
+
+    const checkNativePermission = async () => {
+      try {
+        const hasPermission = await browser.permissions.contains({ permissions: ['nativeMessaging'] });
+        const warningEl = document.getElementById('native-permission-warning');
+        if (warningEl) {
+          warningEl.style.display = hasPermission ? 'none' : 'block';
+        }
+        return hasPermission;
+      } catch (e) {
+        console.error('Error checking nativeMessaging permission:', e);
+        return false;
+      }
+    };
+
+    const requestNativePermission = async () => {
+      try {
+        const granted = await browser.permissions.request({ permissions: ['nativeMessaging'] });
+        await checkNativePermission();
+        return granted;
+      } catch (e) {
+        console.error('Error requesting nativeMessaging permission:', e);
+        return false;
+      }
+    };
 
     const updateMethodVisibility = () => {
       const val = document.getElementById('external-method').value;
       document.getElementById('protocol-settings').style.display = val === 'protocol' ? 'flex' : 'none';
       document.getElementById('native-settings').style.display = val === 'native' ? 'flex' : 'none';
       document.getElementById('vlc-http-settings').style.display = val === 'vlc_http' ? 'flex' : 'none';
+      if (val === 'native') {
+        checkNativePermission();
+      }
     };
     updateMethodVisibility();
     
-    document.getElementById('external-method').addEventListener('change', (e) => {
+    document.getElementById('external-method').addEventListener('change', async (e) => {
+      const val = e.target.value;
       updateMethodVisibility();
-      saveSettings({ desktopExternalMethod: e.target.value });
+      if (val === 'native') {
+        const granted = await requestNativePermission();
+        if (!granted) {
+          alert('Native Messaging permission is required to use this option. Reverting to Protocol Handler.');
+          document.getElementById('external-method').value = 'protocol';
+          updateMethodVisibility();
+          saveSettings({ desktopExternalMethod: 'protocol' });
+          return;
+        }
+      }
+      saveSettings({ desktopExternalMethod: val });
+    });
+
+    document.getElementById('grant-native-permission').addEventListener('click', async () => {
+      const granted = await requestNativePermission();
+      if (granted) {
+        alert('Permission granted successfully!');
+      } else {
+        alert('Permission was not granted.');
+      }
     });
     
     document.getElementById('toggle-copy-icon').addEventListener('change', e => saveSettings({ showCopyIcon: e.target.checked }));
     document.getElementById('toggle-play-icon').addEventListener('change', e => saveSettings({ showPlayIcon: e.target.checked }));
     document.getElementById('default-action').addEventListener('change', e => saveSettings({ defaultTapAction: e.target.value }));
+    document.getElementById('web-player-engine').addEventListener('change', e => saveSettings({ webPlayerEngine: e.target.value }));
     document.getElementById('desktop-protocol').addEventListener('change', e => saveSettings({ desktopProtocol: e.target.value }));
     document.getElementById('external-player-path').addEventListener('change', e => saveSettings({ externalPlayerPath: e.target.value }));
     document.getElementById('vlc-http-password').addEventListener('change', e => saveSettings({ vlcHttpPassword: e.target.value }));

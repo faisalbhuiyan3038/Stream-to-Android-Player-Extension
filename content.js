@@ -159,7 +159,7 @@ function updateMenu() {
       if (action === 'copy') {
         navigator.clipboard.writeText(url).catch(() => {});
       } else if (action === 'browser') {
-        window.open(url, '_blank');
+        browser.runtime.sendMessage({ type: 'openWebPlayer', url: url });
       } else if (action === 'external') {
         browser.runtime.sendMessage({ type: 'openExternalPlayer', url: url });
       } else {

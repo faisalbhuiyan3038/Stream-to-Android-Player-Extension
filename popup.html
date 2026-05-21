@@ -100,6 +100,16 @@
 
       <div class="setting-row column">
         <div class="setting-label">
+          <span class="setting-title">Web Player Engine</span>
+        </div>
+        <select id="web-player-engine" class="select-dropdown">
+          <option value="vidstack">Vidstack (HLS / DASH / MP4)</option>
+          <option value="shaka">Shaka Player (HLS / DASH / MP4)</option>
+        </select>
+      </div>
+
+      <div class="setting-row column">
+        <div class="setting-label">
           <span class="setting-title">External Player Integration</span>
         </div>
         <select id="external-method" class="select-dropdown">
@@ -114,6 +124,10 @@
       </div>
 
       <div id="native-settings" class="setting-row column" style="display: none;">
+        <div id="native-permission-warning" style="display: none; background: rgba(255, 152, 0, 0.1); border: 1px solid rgba(255, 152, 0, 0.3); border-radius: 6px; padding: 8px; margin-bottom: 8px;">
+          <span style="color: #ffb74d; font-size: 11px; display: block; margin-bottom: 6px;">⚠️ Native Messaging permission is required.</span>
+          <button id="grant-native-permission" class="save-btn" style="padding: 4px 8px; font-size: 11px; width: auto; margin: 0; display: inline-block;">Grant Permission</button>
+        </div>
         <span class="setting-desc" style="margin-bottom: 4px;">Absolute path to player executable (optional, defaults to mpv)</span>
         <input type="text" id="external-player-path" class="text-input" placeholder="C:\Program Files\mpv\mpv.exe">
       </div>

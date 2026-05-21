@@ -1,0 +1,33 @@
+{
+  "name": "stream-to-android-player-extension",
+  "version": "1.0.0",
+  "description": "- Fixed overheating, high resource usage issues.\r - Added better styling.\r - Added popup UI to configure settings.\r - Streams show duration (if found).\r ### 1.1\r - Added multiple streaming detection methods\r - Successfully detects streams from sites that were not detected in 1.0\r ### 1.0\r - Initial release\r - Detects streaming videos from many sites successfuly.\r - Fails in few sites.",
+  "main": "background.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build:vidstack": "esbuild src/player.js --bundle --minify --format=esm --outfile=player.bundle.js",
+    "build:shaka": "esbuild src/player-shaka.js --bundle --minify --format=iife --global-name=ShakaInit --outfile=player-shaka.bundle.js",
+    "build": "npm run build:vidstack && npm run build:shaka"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension/issues"
+  },
+  "homepage": "https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension#readme",
+  "dependencies": {
+    "dash.js": "^4.0.0",
+    "dashjs": "^5.1.1",
+    "hls.js": "^1.6.16",
+    "shaka-player": "^5.1.5",
+    "vidstack": "^0.6.15"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0"
+  }
+}
