@@ -21,10 +21,17 @@ let currentDomain = '';
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
-  // Load settings and platform
-  const msgResult = await browser.runtime.sendMessage({ type: 'getSettings' });
-  const settings = { ...defaults, ...(msgResult.settings || {}) };
-  const platform = msgResult.platform || 'win';
+  // Load settings and platform directly to avoid background script wake-up race conditions
+  const storageResult = await browser.storage.local.get('settings');
+  const settings = { ...defaults, ...(storageResult.settings || {}) };
+  
+  let platform = 'win';
+  try {
+    const info = await browser.runtime.getPlatformInfo();
+    platform = info.os;
+  } catch (e) {
+    // fallback to default
+  }
 
   // Populate UI
   document.getElementById('toggle-enabled').checked = settings.enabled;
@@ -85,6 +92,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('external-method').addEventListener('change', async (e) => {
       const val = e.target.value;
       updateMethodVisibility();
+      
+      // Save immediately in case the permission prompt closes the popup
+      saveSettings({ desktopExternalMethod: val });
+      
       if (val === 'native') {
         const granted = await requestNativePermission();
         if (!granted) {
@@ -95,7 +106,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
       }
-      saveSettings({ desktopExternalMethod: val });
     });
 
     document.getElementById('grant-native-permission').addEventListener('click', async () => {

@@ -1,4 +1,12 @@
 ## Changelog
+### 1.4
+- Fix Native Host Messaging not launching streams or python script.
+- Fix icons not appearing in some websites.
+- Instantly apply popup settings. No need to reload page.
+### 1.3
+- Added Desktop support.
+- Add web video player, copy URL, and ability to open in external video player features to desktop.
+- Native Host messaging requires additional setup. Stay tuned for instructions.
 ### 1.2
 - Fixed overheating, high resource usage issues.
 - Added better styling.

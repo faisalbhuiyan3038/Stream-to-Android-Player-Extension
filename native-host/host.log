@@ -1,0 +1,19 @@
+[Thu 05/21/2026 22:42:11.65] host.bat started 
+[Thu 05/21/2026 22:42:14.49] Using 'python' 
+Traceback (most recent call last):
+  File "E:\Programming\Stream-to-Android-Player-Extension\native-host\host.py", line 25, in main
+    with open(os.path.join(os.path.dirname(__file__), 'host.log'), 'a') as f:
+         ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 13] Permission denied: 'E:\\Programming\\Stream-to-Android-Player-Extension\\native-host\\host.log'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\Programming\Stream-to-Android-Player-Extension\native-host\host.py", line 58, in <module>
+    main()
+    ~~~~^^
+  File "E:\Programming\Stream-to-Android-Player-Extension\native-host\host.py", line 53, in main
+    with open(os.path.join(os.path.dirname(__file__), 'host.log'), 'a') as f:
+         ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 13] Permission denied: 'E:\\Programming\\Stream-to-Android-Player-Extension\\native-host\\host.log'
+[Thu 05/21/2026 22:42:14.94] host.bat exiting 

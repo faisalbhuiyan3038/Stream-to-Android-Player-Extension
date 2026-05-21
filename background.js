@@ -6,6 +6,9 @@ browser.runtime.getPlatformInfo().then(info => {
   currentPlatform = info.os;
 });
 
+// Log our extension ID so users can copy it for native messaging setup
+console.log('[StreamPlayer] Extension ID:', browser.runtime.id);
+
 let settings = {
   enabled: true,
   cleanNames: true,
@@ -384,39 +387,59 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const playerUrl = browser.runtime.getURL(page + '?url=' + encodeURIComponent(message.url));
     browser.tabs.create({ url: playerUrl });
   } else if (message.type === 'openExternalPlayer') {
-    handleOpenExternalPlayer(message.url);
+    handleOpenExternalPlayer(message.url).then(res => sendResponse(res));
+    return true;
   }
   return true;
 });
 
 async function handleOpenExternalPlayer(url) {
-  if (currentPlatform === 'android') return;
+  if (currentPlatform === 'android') return { success: false, error: 'Not supported on Android' };
 
   const { desktopExternalMethod, desktopProtocol, externalPlayerPath, vlcHttpPassword } = settings;
 
   if (desktopExternalMethod === 'protocol') {
     const protocolStr = desktopProtocol.replace('://', '');
     browser.tabs.create({ url: `${protocolStr}://${url}` });
+    return { success: true };
   } else if (desktopExternalMethod === 'native') {
-    const command = externalPlayerPath ? [externalPlayerPath, url] : ["mpv", url];
+    const playerPath = externalPlayerPath.replace(/^"|"$/g, '');
+    const command = playerPath ? [playerPath, url] : ["mpv", url];
     try {
-      await browser.runtime.sendNativeMessage("stream_player_host", {
+      // Check permission first — nativeMessaging is optional so it may not be granted
+      const hasPermission = await browser.permissions.contains({ permissions: ['nativeMessaging'] });
+      if (!hasPermission) {
+        return { success: false, error: 'nativeMessaging permission not granted. Enable it in the extension popup settings.' };
+      }
+      const response = await browser.runtime.sendNativeMessage("stream_player_host", {
         command: command
       });
+      if (response && response.status === 'error') {
+        return { success: false, error: response.error };
+      }
+      return { success: true };
     } catch (e) {
       console.error("Native messaging failed:", e);
+      return { success: false, error: e.message };
     }
   } else if (desktopExternalMethod === 'vlc_http') {
     const vlcUrl = `http://localhost:8080/requests/status.xml?command=in_play&input=${encodeURIComponent(url)}`;
     const auth = btoa(`:${vlcHttpPassword}`);
     try {
-      await fetch(vlcUrl, {
+      const res = await fetch(vlcUrl, {
         headers: { 'Authorization': `Basic ${auth}` }
       });
+      if (res.ok) {
+        return { success: true };
+      } else {
+        return { success: false, error: `HTTP ${res.status}` };
+      }
     } catch (e) {
       console.error("VLC HTTP failed:", e);
+      return { success: false, error: e.message };
     }
   }
+  return { success: false, error: 'Unknown method' };
 }
 
 // ─── Tab lifecycle ────────────────────────────────────────────────────────────

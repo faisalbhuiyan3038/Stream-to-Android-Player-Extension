@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Stream to Android Player",
-  "version": "1.2",
+  "version": "1.4",
   "description": "Detect streaming videos and open them in external Android video player",
   "author": "Faisal Bhuiyan",
   "browser_specific_settings": {

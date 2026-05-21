@@ -1,7 +1,7 @@
 {
   "name": "stream_player_host",
   "description": "Stream to Android Player Native Host",
-  "path": "host.bat",
+  "path": "E:\\Programming\\Stream-to-Android-Player-Extension\\native-host\\host.bat",
   "type": "stdio",
   "allowed_extensions": [
     "faisalbhuiyan@mozilla"

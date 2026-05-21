@@ -47,14 +47,12 @@ function updateMenu() {
     const name = stream.displayName || stream.name;
     const subtitle = stream.pageTitle || '';
     
-    let actionsHtml = `<button class="share-btn action-share" title="Share">📤</button>`;
-    if (extPlatform !== 'android') {
-      if (extSettings.showCopyIcon !== false) {
-        actionsHtml += `<button class="share-btn action-copy" title="Copy URL">📋</button>`;
-      }
-      if (extSettings.showPlayIcon !== false) {
-        actionsHtml += `<button class="share-btn action-play" title="Play in Browser">▶️</button>`;
-      }
+    let actionsHtml = `<button class="v-handler-btn v-action-share" title="${extPlatform === 'android' ? 'Share' : 'Open in External Player'}">${extPlatform === 'android' ? '📤' : '🖥️'}</button>`;
+    if (extSettings.showCopyIcon !== false) {
+      actionsHtml += `<button class="v-handler-btn v-action-copy" title="Copy URL">📋</button>`;
+    }
+    if (extSettings.showPlayIcon !== false) {
+      actionsHtml += `<button class="v-handler-btn v-action-play" title="Play in Browser">▶️</button>`;
     }
 
     return `
@@ -135,7 +133,7 @@ function updateMenu() {
         margin-left: 12px;
         flex-shrink: 0;
       }
-      .share-btn {
+      .v-handler-btn {
         background: none;
         border: none;
         cursor: pointer;
@@ -143,8 +141,10 @@ function updateMenu() {
         font-size: 15px;
         border-radius: 4px;
         transition: background 0.15s;
+        display: inline-block;
+        color: white;
       }
-      .share-btn:hover {
+      .v-handler-btn:hover {
         background: rgba(255,255,255,0.15);
       }
     `;
@@ -155,13 +155,30 @@ function updateMenu() {
   menu.querySelectorAll('.stream-item').forEach(item => {
     const url = item.dataset.url;
     
-    const handleAction = (action) => {
+    const handleAction = (action, el) => {
       if (action === 'copy') {
         navigator.clipboard.writeText(url).catch(() => {});
       } else if (action === 'browser') {
         browser.runtime.sendMessage({ type: 'openWebPlayer', url: url });
       } else if (action === 'external') {
-        browser.runtime.sendMessage({ type: 'openExternalPlayer', url: url });
+        if (el) {
+          const origText = el.textContent;
+          el.textContent = '⏳';
+          browser.runtime.sendMessage({ type: 'openExternalPlayer', url: url }).then(res => {
+            el.textContent = res && res.success ? '✅' : '❌';
+            if (res && !res.success && res.error) {
+              alert("External Player Error: " + res.error);
+            }
+            setTimeout(() => el.textContent = origText, 1500);
+          }).catch(() => {
+            el.textContent = '❌';
+            setTimeout(() => el.textContent = origText, 1500);
+          });
+        } else {
+          browser.runtime.sendMessage({ type: 'openExternalPlayer', url: url }).then(res => {
+            if (res && !res.success && res.error) alert("External Player Error: " + res.error);
+          }).catch(() => {});
+        }
       } else {
         shareUrl(url); // default/share
       }
@@ -172,33 +189,33 @@ function updateMenu() {
       if (action === 'default') {
         action = extPlatform === 'android' ? 'share' : 'copy';
       }
-      handleAction(action);
+      handleAction(action, null);
     };
     
-    const btnShare = item.querySelector('.action-share');
+    const btnShare = item.querySelector('.v-action-share');
     if (btnShare) {
       btnShare.onclick = (e) => {
         e.stopPropagation();
-        handleAction('share');
+        handleAction(extPlatform === 'android' ? 'share' : 'external', btnShare);
       };
     }
     
-    const btnCopy = item.querySelector('.action-copy');
+    const btnCopy = item.querySelector('.v-action-copy');
     if (btnCopy) {
       btnCopy.onclick = (e) => {
         e.stopPropagation();
         const origText = btnCopy.textContent;
         btnCopy.textContent = '✅';
         setTimeout(() => btnCopy.textContent = origText, 1000);
-        handleAction('copy');
+        handleAction('copy', null);
       };
     }
 
-    const btnPlay = item.querySelector('.action-play');
+    const btnPlay = item.querySelector('.v-action-play');
     if (btnPlay) {
       btnPlay.onclick = (e) => {
         e.stopPropagation();
-        handleAction('browser');
+        handleAction('browser', null);
       };
     }
   });
@@ -217,10 +234,19 @@ function createFloatingButton() {
   button.style.display = 'none';
   document.body.appendChild(button);
 
-  button.onclick = () => {
+  let lastClickTime = 0;
+  button.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const now = Date.now();
+    if (now - lastClickTime < 300) return; // Prevent double-fire on touch devices
+    lastClickTime = now;
+    
     const menu = document.getElementById('video-handler-menu');
-    menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-  };
+    if (menu) {
+      menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    }
+  });
 
   return button;
 }
@@ -289,6 +315,16 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       button.style.display = 'block';
       updateMenu();
     });
+  }
+});
+
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.settings) {
+    extSettings = { ...extSettings, ...changes.settings.newValue };
+    const menu = document.getElementById('video-handler-menu');
+    if (menu) {
+      updateMenu();
+    }
   }
 });
 
