@@ -58,6 +58,71 @@
       <input type="range" id="max-streams" min="10" max="100" step="5" value="50" class="slider">
     </div>
 
+    <!-- Desktop Settings (hidden on Android) -->
+    <div id="desktop-settings" style="display: none;">
+      <hr class="divider">
+      <div class="list-header">
+        <span class="setting-title" style="margin-left: 12px; margin-top: 8px;">Desktop Settings</span>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-label">
+          <span class="setting-title">Show Copy Icon</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-copy-icon" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-label">
+          <span class="setting-title">Show Play Icon</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-play-icon" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-row column">
+        <div class="setting-label">
+          <span class="setting-title">Click Action</span>
+          <span class="setting-desc">What happens when you click a stream</span>
+        </div>
+        <select id="default-action" class="select-dropdown">
+          <option value="default">Default / Share</option>
+          <option value="copy">Copy Link</option>
+          <option value="browser">Play in Browser</option>
+          <option value="external">External Player</option>
+        </select>
+      </div>
+
+      <div class="setting-row column">
+        <div class="setting-label">
+          <span class="setting-title">External Player Integration</span>
+        </div>
+        <select id="external-method" class="select-dropdown">
+          <option value="protocol">Protocol Handler (vlc://)</option>
+          <option value="native">Native Messaging (mpv/vlc)</option>
+          <option value="vlc_http">VLC HTTP Interface</option>
+        </select>
+      </div>
+
+      <div id="protocol-settings" class="setting-row column" style="display: none;">
+        <input type="text" id="desktop-protocol" class="text-input" placeholder="e.g. vlc:// or mpv://">
+      </div>
+
+      <div id="native-settings" class="setting-row column" style="display: none;">
+        <span class="setting-desc" style="margin-bottom: 4px;">Absolute path to player executable (optional, defaults to mpv)</span>
+        <input type="text" id="external-player-path" class="text-input" placeholder="C:\Program Files\mpv\mpv.exe">
+      </div>
+
+      <div id="vlc-http-settings" class="setting-row column" style="display: none;">
+        <input type="password" id="vlc-http-password" class="text-input" placeholder="VLC Web Interface Password">
+      </div>
+    </div>
+
     <hr class="divider">
 
     <!-- Whitelist -->

@@ -1,6 +1,8 @@
 let streams = [];
 let observer = null;
 let debounceTimer = null;
+let extSettings = {};
+let extPlatform = 'win';
 
 // Clear streams when page unloads
 window.addEventListener('beforeunload', () => {
@@ -22,8 +24,10 @@ function createStreamMenu() {
 }
 
 function shareUrl(url) {
-  if (navigator.share) {
+  if (navigator.share && extPlatform === 'android') {
     navigator.share({ url }).catch(() => {});
+  } else {
+    navigator.clipboard.writeText(url).catch(() => {});
   }
 }
 
@@ -42,6 +46,17 @@ function updateMenu() {
   menu.innerHTML = streams.map(stream => {
     const name = stream.displayName || stream.name;
     const subtitle = stream.pageTitle || '';
+    
+    let actionsHtml = `<button class="share-btn action-share" title="Share">📤</button>`;
+    if (extPlatform !== 'android') {
+      if (extSettings.showCopyIcon !== false) {
+        actionsHtml += `<button class="share-btn action-copy" title="Copy URL">📋</button>`;
+      }
+      if (extSettings.showPlayIcon !== false) {
+        actionsHtml += `<button class="share-btn action-play" title="Play in Browser">▶️</button>`;
+      }
+    }
+
     return `
     <div class="stream-item" data-url="${stream.url}" title="${stream.url}">
       <div class="stream-info">
@@ -53,7 +68,7 @@ function updateMenu() {
         ${subtitle ? `<span class="stream-subtitle">${escapeHtml(subtitle)}</span>` : ''}
       </div>
       <div class="stream-actions">
-        <button class="share-btn" title="Share">📤</button>
+        ${actionsHtml}
       </div>
     </div>`;
   }).join('');
@@ -140,15 +155,52 @@ function updateMenu() {
   menu.querySelectorAll('.stream-item').forEach(item => {
     const url = item.dataset.url;
     
-    // Restore tap-the-entire-item to share behavior
+    const handleAction = (action) => {
+      if (action === 'copy') {
+        navigator.clipboard.writeText(url).catch(() => {});
+      } else if (action === 'browser') {
+        window.open(url, '_blank');
+      } else if (action === 'external') {
+        browser.runtime.sendMessage({ type: 'openExternalPlayer', url: url });
+      } else {
+        shareUrl(url); // default/share
+      }
+    };
+
     item.onclick = () => {
-      shareUrl(url);
+      let action = extSettings.defaultTapAction || 'default';
+      if (action === 'default') {
+        action = extPlatform === 'android' ? 'share' : 'copy';
+      }
+      handleAction(action);
     };
     
-    item.querySelector('.share-btn').onclick = (e) => {
-      e.stopPropagation();
-      shareUrl(url);
-    };
+    const btnShare = item.querySelector('.action-share');
+    if (btnShare) {
+      btnShare.onclick = (e) => {
+        e.stopPropagation();
+        handleAction('share');
+      };
+    }
+    
+    const btnCopy = item.querySelector('.action-copy');
+    if (btnCopy) {
+      btnCopy.onclick = (e) => {
+        e.stopPropagation();
+        const origText = btnCopy.textContent;
+        btnCopy.textContent = '✅';
+        setTimeout(() => btnCopy.textContent = origText, 1000);
+        handleAction('copy');
+      };
+    }
+
+    const btnPlay = item.querySelector('.action-play');
+    if (btnPlay) {
+      btnPlay.onclick = (e) => {
+        e.stopPropagation();
+        handleAction('browser');
+      };
+    }
   });
 }
 
@@ -224,9 +276,19 @@ function setupVideoObserver() {
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "streamDetected") {
     streams = message.streams;
-    const button = document.getElementById('video-handler-button') || createFloatingButton();
-    button.style.display = 'block';
-    updateMenu();
+    browser.runtime.sendMessage({ type: 'getSettings' }).then(res => {
+      if (res) {
+        extSettings = res.settings;
+        extPlatform = res.platform;
+      }
+      const button = document.getElementById('video-handler-button') || createFloatingButton();
+      button.style.display = 'block';
+      updateMenu();
+    }).catch(() => {
+      const button = document.getElementById('video-handler-button') || createFloatingButton();
+      button.style.display = 'block';
+      updateMenu();
+    });
   }
 });
 

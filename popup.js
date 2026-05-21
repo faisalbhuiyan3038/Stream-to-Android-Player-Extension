@@ -5,7 +5,14 @@ const defaults = {
   cleanNames: true,
   maxStreams: 50,
   whitelist: [],
-  blacklist: []
+  blacklist: [],
+  showCopyIcon: true,
+  showPlayIcon: true,
+  defaultTapAction: 'default',
+  desktopExternalMethod: 'protocol',
+  desktopProtocol: 'vlc://',
+  externalPlayerPath: '',
+  vlcHttpPassword: ''
 };
 
 let currentDomain = '';
@@ -13,9 +20,10 @@ let currentDomain = '';
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
-  // Load settings
-  const result = await browser.storage.local.get('settings');
-  const settings = { ...defaults, ...(result.settings || {}) };
+  // Load settings and platform
+  const msgResult = await browser.runtime.sendMessage({ type: 'getSettings' });
+  const settings = { ...defaults, ...(msgResult.settings || {}) };
+  const platform = msgResult.platform || 'win';
 
   // Populate UI
   document.getElementById('toggle-enabled').checked = settings.enabled;
@@ -24,6 +32,38 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('max-streams-value').textContent = settings.maxStreams;
   document.getElementById('whitelist').value = (settings.whitelist || []).join('\n');
   document.getElementById('blacklist').value = (settings.blacklist || []).join('\n');
+
+  if (platform !== 'android') {
+    document.getElementById('desktop-settings').style.display = 'block';
+    
+    document.getElementById('toggle-copy-icon').checked = settings.showCopyIcon;
+    document.getElementById('toggle-play-icon').checked = settings.showPlayIcon;
+    document.getElementById('default-action').value = settings.defaultTapAction;
+    document.getElementById('external-method').value = settings.desktopExternalMethod;
+    document.getElementById('desktop-protocol').value = settings.desktopProtocol;
+    document.getElementById('external-player-path').value = settings.externalPlayerPath;
+    document.getElementById('vlc-http-password').value = settings.vlcHttpPassword;
+
+    const updateMethodVisibility = () => {
+      const val = document.getElementById('external-method').value;
+      document.getElementById('protocol-settings').style.display = val === 'protocol' ? 'flex' : 'none';
+      document.getElementById('native-settings').style.display = val === 'native' ? 'flex' : 'none';
+      document.getElementById('vlc-http-settings').style.display = val === 'vlc_http' ? 'flex' : 'none';
+    };
+    updateMethodVisibility();
+    
+    document.getElementById('external-method').addEventListener('change', (e) => {
+      updateMethodVisibility();
+      saveSettings({ desktopExternalMethod: e.target.value });
+    });
+    
+    document.getElementById('toggle-copy-icon').addEventListener('change', e => saveSettings({ showCopyIcon: e.target.checked }));
+    document.getElementById('toggle-play-icon').addEventListener('change', e => saveSettings({ showPlayIcon: e.target.checked }));
+    document.getElementById('default-action').addEventListener('change', e => saveSettings({ defaultTapAction: e.target.value }));
+    document.getElementById('desktop-protocol').addEventListener('change', e => saveSettings({ desktopProtocol: e.target.value }));
+    document.getElementById('external-player-path').addEventListener('change', e => saveSettings({ externalPlayerPath: e.target.value }));
+    document.getElementById('vlc-http-password').addEventListener('change', e => saveSettings({ vlcHttpPassword: e.target.value }));
+  }
 
   // Get current tab info
   try {

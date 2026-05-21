@@ -1,12 +1,24 @@
 // background.js
 let detectedStreams = new Map();
 let pendingUpdates = new Map(); // tabId → timeout for debounced updates
+let currentPlatform = 'win';
+browser.runtime.getPlatformInfo().then(info => {
+  currentPlatform = info.os;
+});
+
 let settings = {
   enabled: true,
   cleanNames: true,
   maxStreams: 50,
   whitelist: [],
-  blacklist: []
+  blacklist: [],
+  showCopyIcon: true,
+  showPlayIcon: true,
+  defaultTapAction: 'default', // 'default' will map to 'share' on Android, 'copy' on Desktop
+  desktopExternalMethod: 'protocol',
+  desktopProtocol: 'vlc://',
+  externalPlayerPath: '',
+  vlcHttpPassword: ''
 };
 
 // Load settings on startup
@@ -357,7 +369,7 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const tabId = message.tabId;
     sendResponse({ streams: detectedStreams.get(tabId) || [] });
   } else if (message.type === 'getSettings') {
-    sendResponse({ settings });
+    sendResponse({ settings, platform: currentPlatform });
   } else if (message.type === 'updateSettings') {
     settings = { ...settings, ...message.settings };
     browser.storage.local.set({ settings });
@@ -365,9 +377,41 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const tabId = message.tabId;
     const streams = detectedStreams.get(tabId) || [];
     sendResponse({ count: streams.length });
+  } else if (message.type === 'openExternalPlayer') {
+    handleOpenExternalPlayer(message.url);
   }
   return true;
 });
+
+async function handleOpenExternalPlayer(url) {
+  if (currentPlatform === 'android') return;
+
+  const { desktopExternalMethod, desktopProtocol, externalPlayerPath, vlcHttpPassword } = settings;
+
+  if (desktopExternalMethod === 'protocol') {
+    const protocolStr = desktopProtocol.replace('://', '');
+    browser.tabs.create({ url: `${protocolStr}://${url}` });
+  } else if (desktopExternalMethod === 'native') {
+    const command = externalPlayerPath ? [externalPlayerPath, url] : ["mpv", url];
+    try {
+      await browser.runtime.sendNativeMessage("stream_player_host", {
+        command: command
+      });
+    } catch (e) {
+      console.error("Native messaging failed:", e);
+    }
+  } else if (desktopExternalMethod === 'vlc_http') {
+    const vlcUrl = `http://localhost:8080/requests/status.xml?command=in_play&input=${encodeURIComponent(url)}`;
+    const auth = btoa(`:${vlcHttpPassword}`);
+    try {
+      await fetch(vlcUrl, {
+        headers: { 'Authorization': `Basic ${auth}` }
+      });
+    } catch (e) {
+      console.error("VLC HTTP failed:", e);
+    }
+  }
+}
 
 // ─── Tab lifecycle ────────────────────────────────────────────────────────────
 

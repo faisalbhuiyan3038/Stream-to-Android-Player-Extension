@@ -1,0 +1,9 @@
+{
+  "name": "stream_player_host",
+  "description": "Stream to Android Player Native Host",
+  "path": "host.bat",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://<REPLACE_WITH_YOUR_EXTENSION_ID>/"
+  ]
+}
