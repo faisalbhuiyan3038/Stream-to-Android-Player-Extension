@@ -68,28 +68,45 @@ A browser extension to detect streaming videos (M3U8, MP4) and send them to your
   - **Quality Selection**: Auto-detected from stream metadata.
   - **Casting**: Indirectly supported via external players (e.g., VLC Chromecast).
 
-## Installation
-1. **Browser Extension**:
-   - Download the latest release from [Firefox Store](https://addons.mozilla.org/en-US/firefox/addon/stream-to-android-player/).
+## Installation & Setup
 
-2. **Native Host Setup** (Required for desktop):
-   - Download the **Native Host** zip from [GitHub Releases](https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension/releases/tag/v1.0.0).
-   - Follow the setup instructions below for your OS.
+### 1. Browser Extension
+
+* **Firefox**:
+  - Download and install the latest version from the [Firefox Add-ons Store](https://addons.mozilla.org/en-US/firefox/addon/stream-to-android-player/).
+
+* **Chrome / Chromium-based Browsers (Edge, Brave, Opera, etc.)**:
+  - Download the source code of this extension.
+  - Open Chrome and navigate to `chrome://extensions/` (or `edge://extensions/` for Edge).
+  - Enable **Developer Mode** using the toggle switch in the top-right corner.
+  - Click **Load unpacked** and select the extension directory (the one containing `manifest.json`).
+  - Once loaded, copy the **Extension ID** shown on the extension's card (e.g., `abcdefghijklmnopqrstuvwxyzabcdef`). You will need this for the Native Host configuration.
+
+---
+
+### 2. Native Host Setup (Required for Desktop Players)
+
+The native host is a lightweight script that enables the browser extension to communicate with and launch desktop media players like VLC or MPV.
+
+#### Prerequisites (Windows)
+- **Python 3**: Make sure [Python](https://www.python.org/downloads/) is installed and added to your system's environment variable `PATH`.
+
+#### Windows Setup Instructions
+1. Download the **Native Host** package from [GitHub Releases](https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension/releases).
+2. Extract the ZIP package to a permanent folder on your computer (do not move or delete this folder after installation, as the registry entries point to it).
+3. Navigate to the extracted folder and run `install.bat`.
+4. When prompted:
+   - **If you only use Firefox**: Press **Enter** to leave the ID blank.
+   - **If you use Chrome/Edge**: Paste the **Extension ID** you copied in Step 1 and press **Enter**.
+5. Restart your browser or reload the extension in `chrome://extensions/` for the native host to connect.
+
+---
 
 ## Usage
-1. Navigate to a webpage with a streaming video.
-2. Click the extension icon in the toolbar.
-3. Select the detected stream from the list.
-4. Choose your preferred media player from the sharing menu (Android) or let the native host open it directly (desktop).
-
-## Native Host Setup
-The native host is required to open streams directly in VLC, MPV, or other players on desktop.
-
-### Windows
-1. Download the **Native Host** zip from [GitHub Releases](https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension/releases/tag/v1.0.0).
-2. Extract the zip file.
-3. Run the `install_host.bat` file as Administrator.
-4. Restart your browser.
+1. Navigate to a webpage containing a streaming video (M3U8, MP4, etc.).
+2. Click the extension icon in the browser toolbar.
+3. Select your desired stream from the detected list.
+4. Choose your preferred media player from the sharing menu (Android) or let the native host open it directly (Desktop).
 
 ### Supported Players
 - **VLC**: Works out of the box.
