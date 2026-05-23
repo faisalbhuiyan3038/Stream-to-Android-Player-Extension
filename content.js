@@ -1,7 +1,12 @@
 let streams = [];
 let observer = null;
 let debounceTimer = null;
-let extSettings = {};
+const defaultSettings = {
+  showCopyIcon: true,
+  showPlayIcon: true,
+  defaultTapAction: 'default'
+};
+let extSettings = { ...defaultSettings };
 let extPlatform = 'win';
 
 // Clear streams when page unloads
@@ -43,33 +48,71 @@ function formatDuration(seconds) {
 function updateMenu() {
   const menu = document.getElementById('video-handler-menu') || createStreamMenu();
 
-  menu.innerHTML = streams.map(stream => {
+  menu.replaceChildren(...streams.map(stream => {
     const name = stream.displayName || stream.name;
     const subtitle = stream.pageTitle || '';
-    
-    let actionsHtml = `<button class="v-handler-btn v-action-share" title="${extPlatform === 'android' ? 'Share' : 'Open in External Player'}">${extPlatform === 'android' ? '📤' : '🖥️'}</button>`;
-    if (extSettings.showCopyIcon !== false) {
-      actionsHtml += `<button class="v-handler-btn v-action-copy" title="Copy URL">📋</button>`;
-    }
-    if (extSettings.showPlayIcon !== false) {
-      actionsHtml += `<button class="v-handler-btn v-action-play" title="Play in Browser">▶️</button>`;
+
+    const item = document.createElement('div');
+    item.className = 'stream-item';
+    item.dataset.url = stream.url;
+    item.title = stream.url;
+
+    const info = document.createElement('div');
+    info.className = 'stream-info';
+
+    const streamName = document.createElement('span');
+    streamName.className = 'stream-name';
+    streamName.textContent = name;
+    info.appendChild(streamName);
+
+    const badges = document.createElement('div');
+    badges.className = 'stream-badges';
+
+    if (stream.quality) {
+      const qualityBadge = document.createElement('span');
+      qualityBadge.className = 'quality-badge';
+      qualityBadge.textContent = stream.quality;
+      badges.appendChild(qualityBadge);
     }
 
-    return `
-    <div class="stream-item" data-url="${stream.url}" title="${stream.url}">
-      <div class="stream-info">
-        <span class="stream-name">${escapeHtml(name)}</span>
-        <div class="stream-badges">
-          ${stream.quality ? `<span class="quality-badge">${stream.quality}</span>` : ''}
-          ${stream.duration ? `<span class="duration-badge">${formatDuration(stream.duration)}</span>` : ''}
-        </div>
-        ${subtitle ? `<span class="stream-subtitle">${escapeHtml(subtitle)}</span>` : ''}
-      </div>
-      <div class="stream-actions">
-        ${actionsHtml}
-      </div>
-    </div>`;
-  }).join('');
+    if (stream.duration) {
+      const durationBadge = document.createElement('span');
+      durationBadge.className = 'duration-badge';
+      durationBadge.textContent = formatDuration(stream.duration);
+      badges.appendChild(durationBadge);
+    }
+
+    info.appendChild(badges);
+
+    if (subtitle) {
+      const subtitleEl = document.createElement('span');
+      subtitleEl.className = 'stream-subtitle';
+      subtitleEl.textContent = subtitle;
+      info.appendChild(subtitleEl);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'stream-actions';
+
+    const shareButton = createActionButton(
+      'v-action-share',
+      extPlatform === 'android' ? 'Share' : 'Open in External Player',
+      extPlatform === 'android' ? '📤' : '🖥️'
+    );
+    actions.appendChild(shareButton);
+
+    if (extSettings.showCopyIcon !== false) {
+      actions.appendChild(createActionButton('v-action-copy', 'Copy URL', '📋'));
+    }
+
+    if (extSettings.showPlayIcon !== false) {
+      actions.appendChild(createActionButton('v-action-play', 'Play in Browser', '▶️'));
+    }
+
+    item.appendChild(info);
+    item.appendChild(actions);
+    return item;
+  }));
 
   // Inject styles once
   if (!document.getElementById('video-handler-styles')) {
@@ -77,75 +120,86 @@ function updateMenu() {
     styles.id = 'video-handler-styles';
     styles.textContent = `
       .stream-item {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 8px 12px;
-        cursor: pointer;
-        border-bottom: 1px solid rgba(255,255,255,0.08);
-        transition: background 0.15s;
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        padding: 8px 12px !important;
+        cursor: pointer !important;
+        border-bottom: 1px solid rgba(255,255,255,0.08) !important;
+        transition: background 0.15s !important;
       }
-      .stream-item:last-child { border-bottom: none; }
-      .stream-item:hover { background: rgba(255,255,255,0.08); }
+      .stream-item:last-child { border-bottom: none !important; }
+      .stream-item:hover { background: rgba(255,255,255,0.08) !important; }
       .stream-info {
-        flex: 1;
-        min-width: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
+        flex: 1 !important;
+        min-width: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 2px !important;
       }
       .stream-name {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        font-size: 13px;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        font-size: 13px !important;
       }
       .stream-subtitle {
-        font-size: 11px;
-        color: rgba(255,255,255,0.5);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        font-size: 11px !important;
+        color: rgba(255,255,255,0.5) !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
       }
       .stream-badges {
-        display: flex;
-        gap: 6px;
-        align-items: center;
-        margin-top: 2px;
+        display: flex !important;
+        gap: 6px !important;
+        align-items: center !important;
+        margin-top: 2px !important;
       }
       .quality-badge, .duration-badge {
-        display: inline-block;
-        color: white;
-        padding: 1px 5px;
-        border-radius: 3px;
-        font-size: 10px;
-        font-weight: 600;
+        display: inline-block !important;
+        color: white !important;
+        padding: 1px 5px !important;
+        border-radius: 3px !important;
+        font-size: 10px !important;
+        font-weight: 600 !important;
       }
       .quality-badge {
-        background: #4CAF50;
+        background: #4CAF50 !important;
       }
       .duration-badge {
-        background: #2196F3;
+        background: #2196F3 !important;
       }
       .stream-actions {
-        display: flex;
-        gap: 6px;
-        margin-left: 12px;
-        flex-shrink: 0;
+        display: flex !important;
+        gap: 6px !important;
+        margin-left: 12px !important;
+        flex-shrink: 0 !important;
+        visibility: visible !important;
+        opacity: 1 !important;
       }
       .v-handler-btn {
-        background: none;
-        border: none;
-        cursor: pointer;
-        padding: 4px;
-        font-size: 15px;
-        border-radius: 4px;
-        transition: background 0.15s;
-        display: inline-block;
-        color: white;
+        all: unset !important;
+        box-sizing: border-box !important;
+        background: none !important;
+        border: none !important;
+        cursor: pointer !important;
+        padding: 4px !important;
+        font-size: 15px !important;
+        line-height: 1 !important;
+        border-radius: 4px !important;
+        transition: background 0.15s !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        color: white !important;
+        min-width: 23px !important;
+        min-height: 23px !important;
+        visibility: visible !important;
+        opacity: 1 !important;
       }
       .v-handler-btn:hover {
-        background: rgba(255,255,255,0.15);
+        background: rgba(255,255,255,0.15) !important;
       }
     `;
     document.head.appendChild(styles);
@@ -221,10 +275,18 @@ function updateMenu() {
   });
 }
 
-function escapeHtml(text) {
-  const el = document.createElement('span');
-  el.textContent = text;
-  return el.innerHTML;
+function createActionButton(actionClass, title, label) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `v-handler-btn ${actionClass}`;
+  button.title = title;
+  button.textContent = label;
+  return button;
+}
+
+function applyRuntimeState(response = {}) {
+  extSettings = { ...defaultSettings, ...(response.settings || extSettings || {}) };
+  extPlatform = response.platform || extPlatform;
 }
 
 function createFloatingButton() {
@@ -304,8 +366,7 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     streams = message.streams;
     browser.runtime.sendMessage({ type: 'getSettings' }).then(res => {
       if (res) {
-        extSettings = res.settings;
-        extPlatform = res.platform;
+        applyRuntimeState(res);
       }
       const button = document.getElementById('video-handler-button') || createFloatingButton();
       button.style.display = 'block';
@@ -320,7 +381,7 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.settings) {
-    extSettings = { ...extSettings, ...changes.settings.newValue };
+    applyRuntimeState({ settings: changes.settings.newValue });
     const menu = document.getElementById('video-handler-menu');
     if (menu) {
       updateMenu();

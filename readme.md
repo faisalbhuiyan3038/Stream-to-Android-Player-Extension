@@ -1,3 +1,10 @@
+# Stream to Android Player Extension
+
+[![GitHub release](https://img.shields.io/github/v/release/anomalyco/Stream-to-Android-Player-Extension)](https://github.com/anomalyco/Stream-to-Android-Player-Extension/releases)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+A browser extension to detect streaming videos (M3U8, MP4) and send them to your preferred media player on Android, Windows, macOS, or Linux. Supports VLC, MPV, and other players with command-line arguments.
+
 ## Changelog
 ### 1.4
 - Fix Native Host Messaging not launching streams or python script.
@@ -20,24 +27,115 @@
 - Detects streaming videos from many sites successfuly.
 - Fails in few sites.
 
-# Store Link
-[Firefox addons](https://addons.mozilla.org/en-US/firefox/addon/stream-to-android-player/)
+## Features
+### **Stream Detection**
+- Detects streaming formats: **M3U8 (HLS), MP4, DASH (MPD), MPEG-TS, WebM, H.264/AVC, H.265/HEVC**. 
+- Extracts video sources from `<video>` and `<source>` tags.
+- Filters non-video URLs (e.g., `data:`, `blob:`).
+- Supports **quality detection** (e.g., 1080p, 4K) via URL patterns.
 
-# Stream to Android Player Addon
-NOTE: THIS EXTENSION IS NOT MEANT FOR DESKTOP WINDOWS/MAC USERS. IT'S BUILT FOR ANDROID USERS.
+### **Player Support**
+- **Android**: VLC, MX Player, and other players via **Web Share API**.
+- **Desktop**: VLC, MPV, and other players via:
+  - **Native Messaging** (browser-to-app communication).
+  - **Protocol Handlers** (e.g., `vlc://`, `mpv://`).
+  - **VLC HTTP Interface** (remote control).
+- **In-Browser Playback**: Shaka Player (HLS/DASH/MP4) and Vidstack.
 
-This addon is available in the Edge Store too (albeit with lower detection) if you use Chromium.
+### **Platform Support**
+- **Android**: Web Share API integration.
+- **Desktop**: Windows, macOS, Linux (native messaging/protocol handlers).
+- **Browsers**: Chrome, Firefox, Edge.
 
-### What does this extension do?
+### **UI/UX**
+- **Toolbar Icon**: Quick access to extension settings.
+- **Popup UI**:
+  - Toggle extension on/off.
+  - Configure **whitelists/blacklists** for domains.
+  - Set **maximum stream count** (e.g., limit to 5 streams).
+  - Customize **default actions** (e.g., "Share" on Android, "Copy" on Desktop).
+- **Stream Menu**:
+  - Displays detected streams with **quality badges** (e.g., "1080p").
+  - Shows **duration** (if available).
+  - Supports **keyboard shortcuts** (e.g., fullscreen).
+- **Notifications**: Alerts for errors (e.g., failed player launches).
 
-It detects streaming m3u8 or mp4 videos on the current site and if found will show a small play icon on the bottom right corner. When you tap it, you can find the list of detected streams. Clicking on each stream will open Android's native sharing menu where you can choose the app you want to open the video in. That's it! You can watch them in your favorite player with all the features the app supports like audio equalizer, swipe to seek etc.
+### **Customization**
+- **Player Preferences**: Choose VLC, MPV, or custom player paths.
+- **Keyboard Shortcuts**: Fullscreen, play/pause, volume control (in-browser player).
+- **Advanced Options**:
+  - **Subtitles**: Supported via Shaka Player (WebVTT, TTML).
+  - **Quality Selection**: Auto-detected from stream metadata.
+  - **Casting**: Indirectly supported via external players (e.g., VLC Chromecast).
 
-### Which video players are supported?
+## Installation
+1. **Browser Extension**:
+   - Download the latest release from [GitHub Releases](https://github.com/anomalyco/Stream-to-Android-Player-Extension/releases).
+   - Extract the zip file.
+   - Open your browser's extension page:
+     - **Chrome/Edge**: `chrome://extensions` or `edge://extensions`
+     - **Firefox**: `about:addons`
+   - Enable **Developer Mode** (if required).
+   - Click **Load Unpacked** and select the extracted extension folder.
 
-Any video player that supports opening streaming links will work. I tested with mpv and SVPlayer.
+2. **Native Host Setup** (Required for desktop):
+   - Download the **Native Host** zip from [GitHub Releases](LINK_TO_RELEASE).
+   - Follow the setup instructions below for your OS.
 
-### Why is this not on the Chrome Web Store?
+## Usage
+1. Navigate to a webpage with a streaming video.
+2. Click the extension icon in the toolbar.
+3. Select the detected stream from the list.
+4. Choose your preferred media player from the sharing menu (Android) or let the native host open it directly (desktop).
 
-Creating a developer account requires a registration fee and I am not able to bear the cost yet.
+## Native Host Setup
+The native host is required to open streams directly in VLC, MPV, or other players on desktop.
 
-If there is any issues, please create a github issue and I will take a look at it when I am free.
+### Windows
+1. Download the **Native Host** zip from [GitHub Releases](LINK_TO_RELEASE).
+2. Extract the zip file.
+3. Run the `install_host.bat` file as Administrator.
+4. Restart your browser.
+
+### Supported Players
+- **VLC**: Works out of the box.
+- **MPV**: Works out of the box.
+- **Other Players**: May work if they support the same command-line arguments as VLC/MPV.
+
+## Troubleshooting
+### **Extension Issues**
+- **Extension icon not appearing**:
+  - Ensure the extension is loaded correctly in **Developer Mode**.
+  - Refresh the webpage or restart the browser.
+
+- **Streams not detected**:
+  - The website may use a **non-standard format** (e.g., DRM-protected streams).
+  - Check the extension popup for **error logs**.
+  - Try **whitelisting** the domain in settings.
+
+- **Popup UI not responding**:
+  - Disable and re-enable the extension.
+  - Clear browser cache and reload.
+
+### **Player Issues**
+- **Android (Web Share API)**:
+  - Ensure **VLC/MX Player** is installed.
+  - Grant **storage permissions** to the player app.
+  - Restart the browser if sharing fails.
+
+- **Desktop (Native Host)**:
+  - Ensure the **native host is installed** (check `chrome://extensions` or `about:addons`).
+  - Verify **browser permissions** for native messaging.
+  - Restart the browser and system if needed.
+
+- **VLC/MPV not launching**:
+  - Check if the **player path is correct** in extension settings.
+  - Ensure **protocol handlers** (e.g., `vlc://`) are registered.
+  - For **VLC HTTP Interface**, verify the password in settings.
+
+- **In-Browser Playback**:
+  - Ensure **Shaka Player/Vidstack** is enabled in settings.
+  - Check for **CORS errors** in the browser console.
+
+## License
+This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
