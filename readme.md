@@ -1,9 +1,9 @@
 # Stream to Android Player Extension
 
-[![GitHub release](https://img.shields.io/github/v/release/anomalyco/Stream-to-Android-Player-Extension)](https://github.com/anomalyco/Stream-to-Android-Player-Extension/releases)
+[![GitHub release](https://img.shields.io/github/v/release/faisalbhuiyan3038/Stream-to-Android-Player-Extension)](https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A browser extension to detect streaming videos (M3U8, MP4) and send them to your preferred media player on Android, Windows, macOS, or Linux. Supports VLC, MPV, and other players with command-line arguments.
+A browser extension to detect streaming videos (M3U8, MP4) and send them to your preferred media player on Android and Windows. Supports VLC, MPV, and other players with command-line arguments.
 
 ## Changelog
 ### 1.4
@@ -70,16 +70,10 @@ A browser extension to detect streaming videos (M3U8, MP4) and send them to your
 
 ## Installation
 1. **Browser Extension**:
-   - Download the latest release from [GitHub Releases](https://github.com/anomalyco/Stream-to-Android-Player-Extension/releases).
-   - Extract the zip file.
-   - Open your browser's extension page:
-     - **Chrome/Edge**: `chrome://extensions` or `edge://extensions`
-     - **Firefox**: `about:addons`
-   - Enable **Developer Mode** (if required).
-   - Click **Load Unpacked** and select the extracted extension folder.
+   - Download the latest release from [Firefox Store](https://addons.mozilla.org/en-US/firefox/addon/stream-to-android-player/).
 
 2. **Native Host Setup** (Required for desktop):
-   - Download the **Native Host** zip from [GitHub Releases](LINK_TO_RELEASE).
+   - Download the **Native Host** zip from [GitHub Releases](https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension/releases/tag/v1.0.0).
    - Follow the setup instructions below for your OS.
 
 ## Usage
@@ -92,7 +86,7 @@ A browser extension to detect streaming videos (M3U8, MP4) and send them to your
 The native host is required to open streams directly in VLC, MPV, or other players on desktop.
 
 ### Windows
-1. Download the **Native Host** zip from [GitHub Releases](LINK_TO_RELEASE).
+1. Download the **Native Host** zip from [GitHub Releases](https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension/releases/tag/v1.0.0).
 2. Extract the zip file.
 3. Run the `install_host.bat` file as Administrator.
 4. Restart your browser.
