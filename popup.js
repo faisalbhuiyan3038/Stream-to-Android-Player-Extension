@@ -1,4 +1,7 @@
 // popup.js
+if (typeof browser === 'undefined') {
+  globalThis.browser = chrome;
+}
 
 const defaults = {
   enabled: true,

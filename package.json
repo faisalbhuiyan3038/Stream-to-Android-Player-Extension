@@ -7,7 +7,10 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "build:vidstack": "esbuild src/player.js --bundle --minify --format=esm --outfile=player.bundle.js",
     "build:shaka": "esbuild src/player-shaka.js --bundle --minify --format=iife --global-name=ShakaInit --outfile=player-shaka.bundle.js",
-    "build": "npm run build:vidstack && npm run build:shaka"
+    "build": "npm run build:vidstack && npm run build:shaka",
+    "target:chrome": "node scripts/build-extension.js --target=chrome",
+    "target:firefox": "node scripts/build-extension.js --target=firefox",
+    "package": "node scripts/build-extension.js --package"
   },
   "repository": {
     "type": "git",

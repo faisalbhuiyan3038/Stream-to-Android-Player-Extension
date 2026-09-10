@@ -1,3 +1,7 @@
+if (typeof browser === 'undefined') {
+  globalThis.browser = chrome;
+}
+
 let streams = [];
 let observer = null;
 let debounceTimer = null;
@@ -28,9 +32,37 @@ function createStreamMenu() {
   return menu;
 }
 
-function shareUrl(url) {
-  if (navigator.share && extPlatform === 'android') {
-    navigator.share({ url }).catch(() => {});
+function launchAndroidIntent(url, name) {
+  let intentUrl;
+  try {
+    const parsed = new URL(url);
+    const scheme = parsed.protocol.replace(':', '');
+    const urlWithoutScheme = url.replace(`${scheme}://`, '');
+    const titleExtra = name ? `S.title=${encodeURIComponent(name)};` : '';
+    intentUrl = `intent://${urlWithoutScheme}#Intent;scheme=${scheme};action=android.intent.action.VIEW;type=video/*;${titleExtra}end`;
+  } catch (e) {
+    intentUrl = `intent:#Intent;action=android.intent.action.VIEW;type=video/*;d=${encodeURIComponent(url)};end`;
+  }
+
+  let iframe = document.getElementById('intent-launcher');
+  if (!iframe) {
+    iframe = document.createElement('iframe');
+    iframe.id = 'intent-launcher';
+    iframe.style.display = 'none';
+    document.body.appendChild(iframe);
+  }
+  iframe.src = intentUrl;
+}
+
+function shareUrl(url, name) {
+  if (extPlatform === 'android') {
+    if (navigator.share && window.isSecureContext) {
+      navigator.share({ url, title: name || '' }).catch(() => {
+        launchAndroidIntent(url, name);
+      });
+    } else {
+      launchAndroidIntent(url, name);
+    }
   } else {
     navigator.clipboard.writeText(url).catch(() => {});
   }
@@ -234,7 +266,7 @@ function updateMenu() {
           }).catch(() => {});
         }
       } else {
-        shareUrl(url); // default/share
+        shareUrl(url, stream.displayName || stream.name || ''); // default/share
       }
     };
 

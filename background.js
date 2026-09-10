@@ -1,8 +1,27 @@
 // background.js
+if (typeof browser === 'undefined') {
+  globalThis.browser = chrome;
+}
+
 let detectedStreams = new Map();
+let storageReady = browser.storage.local.get('detectedStreams').then(result => {
+  if (result.detectedStreams) {
+    detectedStreams = new Map(result.detectedStreams);
+  }
+});
+
+browser.runtime.onStartup.addListener(() => {
+  browser.storage.local.remove('detectedStreams');
+  detectedStreams.clear();
+});
+
+function saveStreams() {
+  browser.storage.local.set({ detectedStreams: Array.from(detectedStreams.entries()) }).catch(() => {});
+}
+
 let pendingUpdates = new Map(); // tabId → timeout for debounced updates
 let currentPlatform = 'win';
-browser.runtime.getPlatformInfo().then(info => {
+let platformReady = browser.runtime.getPlatformInfo().then(info => {
   currentPlatform = info.os;
 });
 
@@ -26,7 +45,7 @@ let settings = {
 };
 
 // Load settings on startup
-browser.storage.local.get('settings').then(result => {
+let settingsReady = browser.storage.local.get('settings').then(result => {
   if (result.settings) {
     settings = { ...settings, ...result.settings };
   }
@@ -236,8 +255,9 @@ function notifyContentScript(tabId) {
     clearTimeout(pendingUpdates.get(tabId));
   }
 
-  pendingUpdates.set(tabId, setTimeout(() => {
+  pendingUpdates.set(tabId, setTimeout(async () => {
     pendingUpdates.delete(tabId);
+    await storageReady;
     const streams = detectedStreams.get(tabId);
     if (!streams || streams.length === 0) return;
 
@@ -251,8 +271,10 @@ function notifyContentScript(tabId) {
 // ─── Add a stream to a tab ───────────────────────────────────────────────────
 
 async function addStream(tabId, url, contentType, duration = null) {
+  await settingsReady;
   if (!settings.enabled) return;
 
+  await storageReady;
   let streams = detectedStreams.get(tabId) || [];
 
   // Cap check
@@ -316,6 +338,7 @@ async function addStream(tabId, url, contentType, duration = null) {
   });
 
   detectedStreams.set(tabId, streams);
+  saveStreams();
   notifyContentScript(tabId);
 }
 
@@ -371,16 +394,25 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
   } else if (message.type === 'getStreams') {
     const tabId = message.tabId;
-    sendResponse({ streams: detectedStreams.get(tabId) || [] });
+    storageReady.then(() => {
+      sendResponse({ streams: detectedStreams.get(tabId) || [] });
+    });
+    return true;
   } else if (message.type === 'getSettings') {
-    sendResponse({ settings, platform: currentPlatform });
+    Promise.all([settingsReady, platformReady]).then(() => {
+      sendResponse({ settings, platform: currentPlatform });
+    });
+    return true;
   } else if (message.type === 'updateSettings') {
     settings = { ...settings, ...message.settings };
     browser.storage.local.set({ settings });
   } else if (message.type === 'getStreamCount') {
     const tabId = message.tabId;
-    const streams = detectedStreams.get(tabId) || [];
-    sendResponse({ count: streams.length });
+    storageReady.then(() => {
+      const streams = detectedStreams.get(tabId) || [];
+      sendResponse({ count: streams.length });
+    });
+    return true;
   } else if (message.type === 'openWebPlayer') {
     const engine = settings.webPlayerEngine || 'vidstack';
     const page = engine === 'shaka' ? 'player-shaka.html' : 'player.html';
@@ -444,9 +476,11 @@ async function handleOpenExternalPlayer(url) {
 
 // ─── Tab lifecycle ────────────────────────────────────────────────────────────
 
-browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
+browser.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   if (changeInfo.status === 'loading') {
+    await storageReady;
     detectedStreams.delete(tabId);
+    saveStreams();
     // Clear pending debounce
     if (pendingUpdates.has(tabId)) {
       clearTimeout(pendingUpdates.get(tabId));
@@ -457,8 +491,10 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
   }
 });
 
-browser.tabs.onRemoved.addListener((tabId) => {
+browser.tabs.onRemoved.addListener(async (tabId) => {
+  await storageReady;
   detectedStreams.delete(tabId);
+  saveStreams();
   if (pendingUpdates.has(tabId)) {
     clearTimeout(pendingUpdates.get(tabId));
     pendingUpdates.delete(tabId);
@@ -468,7 +504,8 @@ browser.tabs.onRemoved.addListener((tabId) => {
 // ─── Web request listener (headers only, no re-fetching) ──────────────────────
 
 browser.webRequest.onHeadersReceived.addListener(
-  (details) => {
+  async (details) => {
+    await settingsReady;
     if (!settings.enabled) return;
     if (details.tabId < 0) return; // No tab context
 
@@ -490,7 +527,8 @@ browser.webRequest.onHeadersReceived.addListener(
 );
 
 // One-time scan when tab is activated (no interval)
-browser.tabs.onActivated.addListener(({ tabId }) => {
+browser.tabs.onActivated.addListener(async ({ tabId }) => {
+  await settingsReady;
   if (settings.enabled) {
     extractVideoSources(tabId);
   }

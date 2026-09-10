@@ -4,6 +4,15 @@
   "version": "1.4",
   "description": "Detect streaming videos and open them in external Android video player",
   "author": "Faisal Bhuiyan",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "faisalbhuiyan@mozilla",
+      "strict_min_version": "109.0"
+    },
+    "gecko_android": {
+      "strict_min_version": "109.0"
+    }
+  },
   "action": {
     "default_icon": {
       "16": "icons/icon16.png",
@@ -13,7 +22,9 @@
     "default_popup": "popup.html"
   },
   "background": {
-    "service_worker": "background.js"
+    "scripts": [
+      "background.js"
+    ]
   },
   "content_scripts": [
     {
