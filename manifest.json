@@ -1,9 +1,18 @@
 {
   "manifest_version": 3,
   "name": "Stream to Android Player",
-  "version": "1.4",
-  "description": "Detect streaming videos and open them in external Android video player",
+  "version": "1.5",
+  "description": "Detect streaming videos and open them in an external video player",
   "author": "Faisal Bhuiyan",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "faisalbhuiyan@mozilla",
+      "strict_min_version": "109.0"
+    },
+    "gecko_android": {
+      "strict_min_version": "109.0"
+    }
+  },
   "action": {
     "default_icon": {
       "16": "icons/icon16.png",
@@ -13,7 +22,9 @@
     "default_popup": "popup.html"
   },
   "background": {
-    "service_worker": "background.js"
+    "scripts": [
+      "background.js"
+    ]
   },
   "content_scripts": [
     {
@@ -24,6 +35,7 @@
         "styles.css"
       ],
       "js": [
+        "shared.js",
         "content.js"
       ]
     }
@@ -35,10 +47,11 @@
     "webRequest",
     "tabs",
     "scripting",
-    "downloads",
     "notifications",
     "clipboardWrite",
-    "storage"
+    "storage",
+    "declarativeNetRequest",
+    "contextMenus"
   ],
   "optional_permissions": [
     "nativeMessaging"
@@ -48,5 +61,13 @@
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "commands": {
+    "send-to-player": {
+      "suggested_key": {
+        "default": "Alt+Shift+P"
+      },
+      "description": "Send the first detected stream to the player"
+    }
   }
 }

@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const AdmZip = require('adm-zip');
 
 const rootDir = path.resolve(__dirname, '..');
 const args = process.argv.slice(2);
@@ -8,6 +8,7 @@ const args = process.argv.slice(2);
 const EXTENSION_FILES = [
   'background.js',
   'content.js',
+  'shared.js',
   'popup.html',
   'popup.css',
   'popup.js',
@@ -47,50 +48,30 @@ function packageBrowser(target) {
   const version = manifestData.version || '1.0.0';
 
   const releasesDir = path.join(rootDir, 'releases');
-  if (!fs.existsSync(releasesDir)) {
-    fs.mkdirSync(releasesDir, { recursive: true });
-  }
+  fs.mkdirSync(releasesDir, { recursive: true });
 
-  const stageDir = path.join(rootDir, `_stage_${targetLower}`);
-  if (fs.existsSync(stageDir)) {
-    fs.rmSync(stageDir, { recursive: true, force: true });
-  }
-  fs.mkdirSync(stageDir, { recursive: true });
+  // Zip entries are written directly (no staging directory, no PowerShell),
+  // so packaging works on Windows, macOS and Linux.
+  const zip = new AdmZip();
+  zip.addFile('manifest.json', fs.readFileSync(manifestSource));
 
-  // Copy manifest
-  fs.copyFileSync(manifestSource, path.join(stageDir, 'manifest.json'));
-
-  // Copy extension files
   for (const file of EXTENSION_FILES) {
     const srcPath = path.join(rootDir, file);
-    const destPath = path.join(stageDir, file);
     if (!fs.existsSync(srcPath)) {
       console.warn(`Warning: Expected file ${file} does not exist in root.`);
       continue;
     }
-    const stat = fs.statSync(srcPath);
-    if (stat.isDirectory()) {
-      fs.cpSync(srcPath, destPath, { recursive: true });
+    if (fs.statSync(srcPath).isDirectory()) {
+      zip.addLocalFolder(srcPath, file);
     } else {
-      fs.copyFileSync(srcPath, destPath);
+      zip.addLocalFile(srcPath);
     }
   }
 
   const zipName = `Stream-to-Player-v${version}-${targetLower}.zip`;
   const zipPath = path.join(releasesDir, zipName);
-
-  if (fs.existsSync(zipPath)) {
-    fs.unlinkSync(zipPath);
-  }
-
-  try {
-    execSync(`powershell -Command "Compress-Archive -Path '${stageDir}\\*' -DestinationPath '${zipPath}' -Force"`, { stdio: 'inherit' });
-    console.log(`[OK] Created release package: releases/${zipName}`);
-  } catch (err) {
-    console.error(`Failed to create zip for ${targetLower}:`, err);
-  } finally {
-    fs.rmSync(stageDir, { recursive: true, force: true });
-  }
+  zip.writeZip(zipPath);
+  console.log(`[OK] Created release package: releases/${zipName}`);
 }
 
 function main() {

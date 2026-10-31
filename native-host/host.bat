@@ -18,4 +18,6 @@ if %ERRORLEVEL% == 0 (
   goto :end
 )
 
+echo Python 3 was not found on PATH. Install it from python.org and re-run install.bat. 1>&2
+
 :end

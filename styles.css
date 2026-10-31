@@ -14,6 +14,22 @@
   z-index: 999999;
   font-size: 24px;
   transition: opacity 0.3s, transform 0.2s;
+  touch-action: none; /* lets a long-press drag the button on touch screens */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+
+/* "Fade when idle" setting */
+#video-handler-button.v-faded {
+  opacity: 0.3;
+  transform: scale(0.8);
+}
+
+#video-handler-button.v-dragging {
+  cursor: grabbing;
+  transition: none;
+  opacity: 1;
 }
 
 #video-handler-button:hover {
@@ -34,7 +50,7 @@
   max-height: 350px;
   overflow-y: auto;
   color: white;
-  max-width: 320px;
+  max-width: min(320px, calc(100vw - 16px));
   min-width: 200px;
   width: auto;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;

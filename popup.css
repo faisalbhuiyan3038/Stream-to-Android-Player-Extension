@@ -247,6 +247,93 @@ body {
   background: #2e7d32;
 }
 
+/* Stream list (current page) */
+.stream-list {
+  margin-bottom: 12px;
+}
+
+.stream-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.stream-row-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stream-row-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stream-row-meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 10px;
+  color: rgba(255,255,255,0.5);
+}
+
+.stream-row-meta .badge {
+  color: #fff;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.badge.quality { background: #4CAF50; }
+.badge.duration { background: #2196F3; }
+.badge.subs { background: #9C27B0; }
+
+.stream-row-meta select {
+  background: rgba(255,255,255,0.1);
+  color: #e0e0e0;
+  border: none;
+  border-radius: 3px;
+  font-size: 10px;
+}
+
+.stream-row-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.row-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px;
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 4px;
+  color: #fff;
+}
+
+.row-btn:hover {
+  background: rgba(255,255,255,0.12);
+}
+
+.stream-empty {
+  font-size: 12px;
+  color: rgba(255,255,255,0.4);
+  padding: 6px 0 10px;
+}
+
 /* Footer */
 .popup-footer {
   margin-top: 12px;

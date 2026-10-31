@@ -5,6 +5,36 @@ const videoUrl = urlParams.get('url');
 const errorEl = document.getElementById('error-message');
 const video = document.getElementById('video');
 
+// Subtitle files detected on the source page, passed by the background script as ?subs=[{url,label,lang}]
+let subtitles = [];
+try {
+  subtitles = JSON.parse(urlParams.get('subs') || '[]');
+} catch (e) {
+  console.warn('Ignoring malformed subs parameter:', e);
+}
+
+function subtitleMime(url) {
+  const path = url.toLowerCase().split('?')[0];
+  if (path.endsWith('.srt')) return 'text/srt';
+  if (path.endsWith('.ass') || path.endsWith('.ssa')) return 'text/x-ssa';
+  return 'text/vtt';
+}
+
+async function addSubtitles(player) {
+  for (const sub of subtitles) {
+    try {
+      await player.addTextTrackAsync(sub.url, sub.lang || 'und', 'subtitles', subtitleMime(sub.url), undefined, sub.label || '');
+    } catch (e) {
+      console.warn('Could not load subtitle', sub.url, e);
+    }
+  }
+  // Shaka 5: selecting a track shows it, selectTextTrack(null) hides captions
+  const tracks = player.getTextTracks();
+  if (tracks.length > 0) {
+    player.selectTextTrack(tracks[0]);
+  }
+}
+
 async function init() {
   if (!videoUrl) {
     errorEl.textContent = 'No video URL provided.';
@@ -49,6 +79,7 @@ async function init() {
 
   try {
     await player.load(videoUrl);
+    await addSubtitles(player);
     video.play().catch(e => console.log('Autoplay blocked:', e.message));
   } catch (e) {
     console.error('Failed to load stream:', e);

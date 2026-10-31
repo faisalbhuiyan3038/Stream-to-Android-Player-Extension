@@ -110,9 +110,39 @@
   });
   document.addEventListener('fullscreenchange', updateFsState);
 
+  // ── Captions ──────────────────────────────────────────────
+  const btnCc = document.getElementById('btn-cc');
+  function cycleCaptions() {
+    const p = window._shakaPlayer;
+    if (!p) return;
+    const tracks = p.getTextTracks();
+    if (tracks.length === 0) return;
+    // Cycle: track 1 -> track 2 -> ... -> off -> track 1
+    const active = tracks.findIndex(t => t.active);
+    if (active === -1) {
+      p.selectTextTrack(tracks[0]);
+    } else if (active < tracks.length - 1) {
+      p.selectTextTrack(tracks[active + 1]);
+    } else {
+      p.selectTextTrack(null);
+    }
+    const now = p.getTextTracks().find(t => t.active);
+    btnCc.title = now ? `Captions: ${now.label || now.language || 'on'} (C)` : 'Captions: off (C)';
+  }
+  btnCc.addEventListener('click', cycleCaptions);
+  // The player attaches asynchronously; reveal the button once subtitle tracks exist
+  const ccTimer = setInterval(() => {
+    const p = window._shakaPlayer;
+    if (p && p.getTextTracks().length > 0) {
+      btnCc.style.display = '';
+      clearInterval(ccTimer);
+    }
+  }, 500);
+
   // ── Keyboard shortcuts ────────────────────────────────────
   document.addEventListener('keydown', e => {
     switch (e.key) {
+      case 'c': cycleCaptions(); break;
       case ' ': case 'k': video.paused ? video.play() : video.pause(); e.preventDefault(); break;
       case 'ArrowLeft':  video.currentTime -= 10; break;
       case 'ArrowRight': video.currentTime += 10; break;

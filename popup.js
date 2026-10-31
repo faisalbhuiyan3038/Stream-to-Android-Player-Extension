@@ -11,11 +11,18 @@ const defaults = {
   blacklist: [],
   showCopyIcon: true,
   showPlayIcon: true,
+  showDownloadIcon: false,
   defaultTapAction: 'default',
   webPlayerEngine: 'vidstack',
-  desktopExternalMethod: 'protocol',
+  desktopExternalMethod: 'native',
   desktopProtocol: 'vlc://',
+  protocolUrlFormat: 'encoded',
+  buttonVisibility: 'always',
   externalPlayerPath: '',
+  nativeArgsTemplate: '',
+  downloadDir: '',
+  forwardCookies: false,
+  androidPlayer: 'auto',
   vlcHttpPassword: ''
 };
 
@@ -44,15 +51,34 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('whitelist').value = (settings.whitelist || []).join('\n');
   document.getElementById('blacklist').value = (settings.blacklist || []).join('\n');
 
+  // Floating button controls (all platforms)
+  document.getElementById('button-visibility').value = settings.buttonVisibility;
+  document.getElementById('button-visibility').addEventListener('change', e => saveSettings({ buttonVisibility: e.target.value }));
+  await initButtonPositionControls();
+
+  if (platform === 'android') {
+    document.getElementById('android-settings').style.display = 'block';
+    document.getElementById('android-player').value = settings.androidPlayer;
+    document.getElementById('android-default-action').value = settings.defaultTapAction;
+    document.getElementById('android-player').addEventListener('change', e => saveSettings({ androidPlayer: e.target.value }));
+    document.getElementById('android-default-action').addEventListener('change', e => saveSettings({ defaultTapAction: e.target.value }));
+  }
+
   if (platform !== 'android') {
     document.getElementById('desktop-settings').style.display = 'block';
-    
+
     document.getElementById('toggle-copy-icon').checked = settings.showCopyIcon;
     document.getElementById('toggle-play-icon').checked = settings.showPlayIcon;
+    document.getElementById('toggle-download-icon').checked = settings.showDownloadIcon;
+    document.getElementById('toggle-forward-cookies').checked = settings.forwardCookies;
+    document.getElementById('native-args-template').value = settings.nativeArgsTemplate;
+    document.getElementById('download-dir').value = settings.downloadDir;
     document.getElementById('default-action').value = settings.defaultTapAction;
     document.getElementById('web-player-engine').value = settings.webPlayerEngine;
     document.getElementById('external-method').value = settings.desktopExternalMethod;
     document.getElementById('desktop-protocol').value = settings.desktopProtocol;
+    document.getElementById('protocol-format').value = settings.protocolUrlFormat;
+    document.getElementById('protocol-format').addEventListener('change', e => saveSettings({ protocolUrlFormat: e.target.value }));
     document.getElementById('external-player-path').value = settings.externalPlayerPath;
     document.getElementById('vlc-http-password').value = settings.vlcHttpPassword;
 
@@ -122,6 +148,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     document.getElementById('toggle-copy-icon').addEventListener('change', e => saveSettings({ showCopyIcon: e.target.checked }));
     document.getElementById('toggle-play-icon').addEventListener('change', e => saveSettings({ showPlayIcon: e.target.checked }));
+    document.getElementById('toggle-download-icon').addEventListener('change', e => saveSettings({ showDownloadIcon: e.target.checked }));
+    document.getElementById('toggle-forward-cookies').addEventListener('change', e => saveSettings({ forwardCookies: e.target.checked }));
+    document.getElementById('native-args-template').addEventListener('change', e => saveSettings({ nativeArgsTemplate: e.target.value }));
+    document.getElementById('download-dir').addEventListener('change', e => saveSettings({ downloadDir: e.target.value }));
+    document.getElementById('test-native').addEventListener('click', async () => {
+      const out = document.getElementById('native-test-result');
+      out.textContent = 'Testing…';
+      const granted = await checkNativePermission();
+      if (!granted) {
+        out.textContent = 'Grant the Native Messaging permission first.';
+        return;
+      }
+      const res = await browser.runtime.sendMessage({ type: 'nativePing' }).catch(e => ({ success: false, error: e.message }));
+      if (res && res.success) {
+        const tools = [res.response.ytdlp ? 'yt-dlp' : null, res.response.ffmpeg ? 'ffmpeg' : null].filter(Boolean);
+        out.textContent = `Host v${res.response.version} OK (${res.response.os}). Download tools: ${tools.join(', ') || 'none found'}.`;
+      } else {
+        out.textContent = `Failed: ${res && res.error}`;
+      }
+    });
     document.getElementById('default-action').addEventListener('change', e => saveSettings({ defaultTapAction: e.target.value }));
     document.getElementById('web-player-engine').addEventListener('change', e => saveSettings({ webPlayerEngine: e.target.value }));
     document.getElementById('desktop-protocol').addEventListener('change', e => saveSettings({ desktopProtocol: e.target.value }));
@@ -131,7 +177,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Get current tab info
   try {
-    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+    // popup.html?tabId=N inspects another tab (used by the automated tests)
+    const forcedTabId = parseInt(new URLSearchParams(location.search).get('tabId'), 10);
+    const tabs = Number.isInteger(forcedTabId)
+      ? [await browser.tabs.get(forcedTabId)]
+      : await browser.tabs.query({ active: true, currentWindow: true });
     if (tabs[0]) {
       const tab = tabs[0];
       const url = new URL(tab.url);
@@ -151,6 +201,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const countEl = document.getElementById('stream-count');
         countEl.textContent = `${response.count} stream${response.count !== 1 ? 's' : ''}`;
       }
+      await renderStreamList(tab.id, settings, platform);
     }
   } catch (e) {
     document.getElementById('current-domain').textContent = 'N/A';
@@ -216,6 +267,142 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, 1500);
   });
 });
+
+// ─── Floating button position ────────────────────────────────────────────────
+// content.js owns the format: { global: {side, yRatio}, sites: { host: {side, yRatio} } }
+
+const CORNERS = {
+  'bottom-right': { side: 'right', yRatio: 1 },
+  'bottom-left': { side: 'left', yRatio: 1 },
+  'top-right': { side: 'right', yRatio: 0 },
+  'top-left': { side: 'left', yRatio: 0 }
+};
+
+function cornerName(layout) {
+  if (!layout) return 'bottom-right';
+  if (layout.sites && Object.keys(layout.sites).length > 0) return 'custom';
+  const g = layout.global;
+  if (!g) return 'bottom-right';
+  return Object.keys(CORNERS).find(name => CORNERS[name].side === g.side && CORNERS[name].yRatio === g.yRatio) || 'custom';
+}
+
+async function initButtonPositionControls() {
+  const select = document.getElementById('button-corner');
+  const stored = await browser.storage.local.get('buttonLayout');
+  select.value = cornerName(stored.buttonLayout);
+
+  select.addEventListener('change', async () => {
+    const pos = CORNERS[select.value];
+    if (!pos) return;
+    await browser.storage.local.set({ buttonLayout: { global: { ...pos }, sites: {} } });
+  });
+
+  document.getElementById('reset-button-position').addEventListener('click', async () => {
+    await browser.storage.local.set({ buttonLayout: { global: { ...CORNERS['bottom-right'] }, sites: {} } });
+    select.value = 'bottom-right';
+  });
+}
+
+// ─── Stream list for the current tab ─────────────────────────────────────────
+
+async function renderStreamList(tabId, settings, platform) {
+  const list = document.getElementById('stream-list');
+  list.replaceChildren();
+  const res = await browser.runtime.sendMessage({ type: 'getStreams', tabId }).catch(() => null);
+  const streams = (res && res.streams) || [];
+  const subtitles = (res && res.subtitles) || [];
+  if (streams.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'stream-empty';
+    empty.textContent = 'No streams detected on this page yet.';
+    list.appendChild(empty);
+    return;
+  }
+
+  const isAndroid = platform === 'android';
+  const chosen = new Map(); // stream.url -> variant url
+
+  for (const stream of streams) {
+    const row = document.createElement('div');
+    row.className = 'stream-row';
+
+    const info = document.createElement('div');
+    info.className = 'stream-row-info';
+    const name = document.createElement('span');
+    name.className = 'stream-row-name';
+    name.textContent = stream.displayName || stream.name;
+    name.title = stream.url;
+    info.appendChild(name);
+
+    const meta = document.createElement('div');
+    meta.className = 'stream-row-meta';
+    const addBadge = (cls, text) => {
+      const b = document.createElement('span');
+      b.className = `badge ${cls}`;
+      b.textContent = text;
+      meta.appendChild(b);
+    };
+    if (stream.quality) addBadge('quality', stream.quality);
+    if (stream.duration) addBadge('duration', StreamShared.formatDuration(stream.duration));
+    if (subtitles.length) addBadge('subs', `CC ${subtitles.length}`);
+    if (stream.variants && stream.variants.length > 1) {
+      const select = document.createElement('select');
+      const auto = document.createElement('option');
+      auto.value = '';
+      auto.textContent = 'Auto';
+      select.appendChild(auto);
+      for (const v of stream.variants) {
+        const o = document.createElement('option');
+        o.value = v.url;
+        o.textContent = v.label;
+        select.appendChild(o);
+      }
+      select.onchange = () => select.value ? chosen.set(stream.url, select.value) : chosen.delete(stream.url);
+      meta.appendChild(select);
+    }
+    info.appendChild(meta);
+
+    const actions = document.createElement('div');
+    actions.className = 'stream-row-actions';
+    const effective = () => chosen.get(stream.url) || stream.url;
+    const addButton = (label, title, handler) => {
+      const btn = document.createElement('button');
+      btn.className = 'row-btn';
+      btn.textContent = label;
+      btn.title = title;
+      btn.onclick = async () => {
+        const orig = btn.textContent;
+        btn.textContent = '⏳';
+        const ok = await handler().catch(() => false);
+        btn.textContent = ok ? '✅' : '❌';
+        setTimeout(() => btn.textContent = orig, 1200);
+      };
+      actions.appendChild(btn);
+    };
+    const viaBackground = type => async () => {
+      const r = await browser.runtime.sendMessage({ type, tabId, url: effective(), streamUrl: stream.url });
+      return !!(r && r.success !== false);
+    };
+
+    if (isAndroid) {
+      addButton('📤', 'Share / open in player', async () => {
+        StreamShared.shareToAndroid(window, effective(), stream.displayName || stream.name, settings.androidPlayer, subtitles[0] && subtitles[0].url);
+        return true;
+      });
+    } else {
+      addButton('🖥️', 'Open in External Player', viaBackground('openExternalPlayer'));
+    }
+    addButton('📋', 'Copy URL', async () => { await navigator.clipboard.writeText(effective()); return true; });
+    addButton('▶️', 'Play in Browser', viaBackground('openWebPlayer'));
+    if (!isAndroid && settings.showDownloadIcon) {
+      addButton('⬇️', 'Download with yt-dlp / ffmpeg', viaBackground('downloadStream'));
+    }
+
+    row.appendChild(info);
+    row.appendChild(actions);
+    list.appendChild(row);
+  }
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

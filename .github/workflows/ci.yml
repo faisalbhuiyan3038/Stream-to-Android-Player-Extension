@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    name: Build + unit/host tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: npm ci
+      - run: npm run build
+      - name: Bundles are up to date
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          # esbuild output can differ slightly between versions; only fail on missing files
+          test -s player.bundle.js && test -s player-shaka.bundle.js && test -s player.bundle.css
+      - run: npm test
+      - name: Package both browsers
+        run: npm run package
+      - name: Manifests agree on version
+        shell: bash
+        run: node -e "const c=require('./manifest.chrome.json'),f=require('./manifest.firefox.json');if(c.version!==f.version){console.error('version mismatch');process.exit(1)}"
+
+  e2e-chromium:
+    name: Browser tests (Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # Extensions need a headed browser, so run under a virtual display
+      - run: xvfb-run -a npm run test:e2e

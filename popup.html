@@ -13,6 +13,9 @@
       <span id="stream-count" class="stream-count">0 streams</span>
     </header>
 
+    <!-- Streams detected on the current page -->
+    <div id="stream-list" class="stream-list"></div>
+
     <!-- Master toggle -->
     <div class="setting-row">
       <div class="setting-label">
@@ -58,6 +61,68 @@
       <input type="range" id="max-streams" min="10" max="100" step="5" value="50" class="slider">
     </div>
 
+    <!-- Floating button -->
+    <div class="setting-row column">
+      <div class="setting-label">
+        <span class="setting-title">Floating button</span>
+        <span class="setting-desc">Drag it anywhere on a page (long-press on touch); it remembers the spot per site</span>
+      </div>
+      <select id="button-visibility" class="select-dropdown">
+        <option value="always">Always visible</option>
+        <option value="fade">Fade when idle</option>
+        <option value="never">Hidden (use the toolbar icon)</option>
+      </select>
+    </div>
+
+    <div class="setting-row column">
+      <div class="setting-label">
+        <span class="setting-title">Button corner</span>
+        <span class="setting-desc">Applies to all sites and clears dragged positions</span>
+      </div>
+      <select id="button-corner" class="select-dropdown">
+        <option value="bottom-right">Bottom right</option>
+        <option value="bottom-left">Bottom left</option>
+        <option value="top-right">Top right</option>
+        <option value="top-left">Top left</option>
+        <option value="custom" disabled>Custom (dragged)</option>
+      </select>
+      <button id="reset-button-position" class="save-btn">Reset button position</button>
+    </div>
+
+    <!-- Android Settings (hidden on desktop) -->
+    <div id="android-settings" style="display: none;">
+      <hr class="divider">
+      <div class="list-header">
+        <span class="setting-title" style="margin-left: 12px; margin-top: 8px;">Android Settings</span>
+      </div>
+
+      <div class="setting-row column">
+        <div class="setting-label">
+          <span class="setting-title">Player</span>
+          <span class="setting-desc">App that opens a stream</span>
+        </div>
+        <select id="android-player" class="select-dropdown">
+          <option value="auto">Ask (share sheet / open with)</option>
+          <option value="vlc">VLC</option>
+          <option value="mx">MX Player</option>
+          <option value="mxpro">MX Player Pro</option>
+          <option value="mpv">mpv-android</option>
+        </select>
+      </div>
+
+      <div class="setting-row column">
+        <div class="setting-label">
+          <span class="setting-title">Click Action</span>
+          <span class="setting-desc">What happens when you tap a stream</span>
+        </div>
+        <select id="android-default-action" class="select-dropdown">
+          <option value="default">Share / open in player</option>
+          <option value="copy">Copy Link</option>
+          <option value="browser">Play in Browser</option>
+        </select>
+      </div>
+    </div>
+
     <!-- Desktop Settings (hidden on Android) -->
     <div id="desktop-settings" style="display: none;">
       <hr class="divider">
@@ -81,6 +146,28 @@
         </div>
         <label class="toggle">
           <input type="checkbox" id="toggle-play-icon" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-label">
+          <span class="setting-title">Show Download Icon</span>
+          <span class="setting-desc">Needs the native host + yt-dlp or ffmpeg</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-download-icon">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-label">
+          <span class="setting-title">Forward cookies</span>
+          <span class="setting-desc">Send the page's cookies to the player / downloader</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-forward-cookies">
           <span class="toggle-slider"></span>
         </label>
       </div>
@@ -121,6 +208,11 @@
 
       <div id="protocol-settings" class="setting-row column" style="display: none;">
         <input type="text" id="desktop-protocol" class="text-input" placeholder="e.g. vlc:// or mpv://">
+        <span class="setting-desc" style="margin: 6px 0 4px;">URL format. Needs a registered handler, see docs/PROTOCOL_HANDLER.md</span>
+        <select id="protocol-format" class="select-dropdown">
+          <option value="encoded">Encoded: vlc://https%3A%2F%2Fhost%2Fvideo.m3u8 (recommended)</option>
+          <option value="raw">Raw: vlc://https://host/video.m3u8</option>
+        </select>
       </div>
 
       <div id="native-settings" class="setting-row column" style="display: none;">
@@ -130,6 +222,12 @@
         </div>
         <span class="setting-desc" style="margin-bottom: 4px;">Absolute path to player executable (optional, defaults to mpv)</span>
         <input type="text" id="external-player-path" class="text-input" placeholder="C:\Program Files\mpv\mpv.exe">
+        <span class="setting-desc" style="margin: 6px 0 4px;">Arguments (optional). Placeholders: {url} {referer} {ua} {title} {cookie} {sub}. Empty = automatic for mpv / VLC.</span>
+        <input type="text" id="native-args-template" class="text-input" placeholder="--referrer={referer} --sub-file={sub} {url}">
+        <span class="setting-desc" style="margin: 6px 0 4px;">Download folder (optional, defaults to Downloads)</span>
+        <input type="text" id="download-dir" class="text-input" placeholder="C:\Users\you\Videos">
+        <button id="test-native" class="save-btn" style="margin-top: 8px;">Test native host</button>
+        <span id="native-test-result" class="setting-desc" style="margin-top: 4px;"></span>
       </div>
 
       <div id="vlc-http-settings" class="setting-row column" style="display: none;">
@@ -160,10 +258,11 @@
     <button id="save-lists" class="save-btn">Save Lists</button>
 
     <footer class="popup-footer">
-      <span>v1.2</span>
+      <span>v1.5</span>
     </footer>
   </div>
 
+  <script src="shared.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

@@ -6,6 +6,18 @@
 A browser extension to detect streaming videos (M3U8, MP4) and send them to your preferred media player on Android and Windows. Supports VLC, MPV, and other players with command-line arguments.
 
 ## Changelog
+### 1.5
+- **Referer / User-Agent forwarding**: the page's headers are sent along with the stream to the built-in players (Referer/Origin rewrite), mpv/VLC (native host, `--referrer`, `--user-agent`, VLC HTTP) and optionally cookies (off by default).
+- **Subtitles**: `.vtt` / `.srt` files and `<track>` elements are detected, shown as a `CC n` badge and loaded in the Shaka player (press `C` to cycle). They are also passed to mpv/VLC (`--sub-file`) and to VLC on Android.
+- **Quality picker**: master HLS playlists are parsed; the real resolution is shown and you can send a specific variant (1080p, 720p, ...) to any action. Duration is now also read for master playlists and `.mpd` manifests.
+- **Android**: choose the player (VLC, MX Player, MX Player Pro, mpv-android or the system chooser), bigger touch targets, tap action setting.
+- **Popup stream list**, toolbar badge with the stream count, context menu on links/videos, `Alt+Shift+P` shortcut (desktop), notifications instead of `alert()` for errors.
+- **Native host v2**: no more generated `.bat` for the normal path (arguments are passed safely as a list), argument templates (`{url} {referer} {ua} {title} {cookie} {sub}`), download with yt-dlp / ffmpeg, a "Test native host" button, `install.sh` for Linux/macOS.
+- DASH links opened in the Vidstack player are now handed to Shaka (Vidstack 0.6 cannot play DASH).
+- Fixes: streams requested while a page loads are no longer lost, stale streams no longer survive a navigation, `.ts` segments that belong to a detected playlist are hidden (standalone `.ts` streams are still listed), the stream button now also appears when the page script loads late.
+- Tests: unit, native host and browser (Chromium + Firefox) tests, GitHub Actions workflow, cross-platform packaging.
+- **Floating button**: drag it anywhere (long-press on touch); it snaps to a side edge, remembers the spot per site, and the menu opens towards the side with room. Popup: corner picker, *Reset button position*, and visibility *Always / Fade when idle / Hidden*. It also hides while a video is fullscreen.
+- **Protocol handler**: links are now percent-encoded (lc://https%3A%2F%2F...) so browsers cannot mangle them; a ready-made handler for Windows/Linux and a setup guide are in [docs/PROTOCOL_HANDLER.md](docs/PROTOCOL_HANDLER.md), which also explains how to switch on VLC's web interface. **Native Messaging is now the default method.**
 ### 1.4
 - Fix Native Host Messaging not launching streams or python script.
 - Fix icons not appearing in some websites.
@@ -88,8 +100,14 @@ The native host is required to open streams directly in VLC, MPV, or other playe
 ### Windows
 1. Download the **Native Host** zip from [GitHub Releases](https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension/releases/tag/v1.0.0).
 2. Extract the zip file.
-3. Run the `install_host.bat` file as Administrator.
-4. Restart your browser.
+3. Run `native-host\install.bat` (no administrator rights needed; it only writes to your user registry). For Chrome/Edge/Brave pass or enter the extension ID shown in `chrome://extensions`.
+4. Restart your browser, then choose *Native Messaging* under *External Player Integration* in the popup and press *Test native host*.
+
+### Linux / macOS
+Run `native-host/install.sh [chromium-extension-id]` (needs `python3`). Not covered by the automated browser tests yet.
+
+### Optional arguments and downloads
+In the popup you can set the player path, an argument template and a download folder. The download button needs `yt-dlp` (preferred) or `ffmpeg` on your PATH.
 
 ### Supported Players
 - **VLC**: Works out of the box.

@@ -4,7 +4,6 @@ import 'vidstack/define/media-player.js';
 import 'vidstack/define/media-community-skin.js';
 import { isHLSProvider } from 'vidstack';
 import Hls from 'hls.js';
-import dashjs from 'dashjs';
 
 const urlParams = new URLSearchParams(window.location.search);
 const videoUrl = urlParams.get('url');
@@ -26,18 +25,9 @@ if (!videoUrl) {
   const streamType = getStreamType(videoUrl);
 
   if (streamType === 'dash') {
-    // Vidstack 0.6.x doesn't have a DASH provider — handle DASH directly
-    // using dash.js attached to the underlying <video> element, and let
-    // Vidstack's UI still wrap it via the native video provider.
-    player.addEventListener('provider-setup', (event) => {
-      const provider = event.detail;
-      // provider.video is the raw <video> element Vidstack created
-      const videoEl = provider.video;
-      if (!videoEl) return;
-
-      const dash = dashjs.MediaPlayer().create();
-      dash.initialize(videoEl, videoUrl, true);
-    });
+    // Vidstack 0.6.x has no DASH provider (the old dash.js attach never fired
+    // and left an empty player), so hand DASH streams to the Shaka page.
+    window.location.replace('player-shaka.html' + window.location.search);
   } else {
     // HLS: hand our locally bundled Hls class to the provider so no CDN
     // fetch is attempted (extension CSP blocks external scripts).
