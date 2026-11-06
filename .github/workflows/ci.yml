@@ -16,19 +16,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
       - run: npm ci
       - run: npm run build
-      - name: Bundles are up to date
+      - name: Bundles were built
         if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
           # esbuild output can differ slightly between versions; only fail on missing files
-          test -s player.bundle.js && test -s player-shaka.bundle.js && test -s player.bundle.css
+          for f in player.bundle.js player.bundle.css player-shaka.bundle.js player-shaka.bundle.css download.bundle.js; do test -s "$f" || { echo "missing $f"; exit 1; }; done
       - run: npm test
       - name: Package both browsers
         run: npm run package
@@ -36,16 +36,20 @@ jobs:
         shell: bash
         run: node -e "const c=require('./manifest.chrome.json'),f=require('./manifest.firefox.json');if(c.version!==f.version){console.error('version mismatch');process.exit(1)}"
 
+  # Browser tests run on Windows: the test fixtures are H.264 (tests/e2e/fixtures/hls) and
+  # Playwright's Chromium only decodes H.264 where it can use the operating system's decoders.
+  # Windows runners have a desktop session, so no virtual display is needed.
   e2e-chromium:
-    name: Browser tests (Chromium)
-    runs-on: ubuntu-latest
+    name: Browser tests (Chromium, desktop + phone emulation)
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
-      # Extensions need a headed browser, so run under a virtual display
-      - run: xvfb-run -a npm run test:e2e
+      - run: npx playwright install chromium
+      - run: npm run build
+      - run: npm run test:e2e
+      - run: npm run test:e2e:mobile

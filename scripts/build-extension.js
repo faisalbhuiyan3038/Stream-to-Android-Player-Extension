@@ -18,7 +18,11 @@ const EXTENSION_FILES = [
   'player.bundle.js',
   'player-shaka.html',
   'player-shaka.bundle.js',
-  'player-shaka-controls.js',
+  'player-shaka.bundle.css',
+  'player-common.css',
+  'download.html',
+  'download.css',
+  'download.bundle.js',
   'icons'
 ];
 

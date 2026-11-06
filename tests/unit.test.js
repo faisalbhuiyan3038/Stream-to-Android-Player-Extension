@@ -25,6 +25,8 @@ function loadBackground() {
     browser, chrome: browser, console, URL, URLSearchParams, AbortController, setTimeout, clearTimeout,
     navigator: { userAgent: 'TestUA/1.0' }, fetch: () => Promise.reject(new Error('no network in unit tests')), btoa
   });
+  // background.js loads shared.js itself (importScripts / manifest scripts); do the same here
+  vm.runInContext(fs.readFileSync(path.join(root, 'shared.js'), 'utf8'), context, { filename: 'shared.js' });
   vm.runInContext(fs.readFileSync(path.join(root, 'background.js'), 'utf8'), context, { filename: 'background.js' });
   return context;
 }
@@ -175,3 +177,209 @@ test('default external method is native messaging', () => {
   assert.equal(run('settings.desktopExternalMethod'), 'native');
   assert.equal(run('settings.protocolUrlFormat'), 'encoded');
 });
+// ── 1.6 settings migration ──────────────────────────────────────────────────
+
+test('migration: users who had the ⬇️ (native yt-dlp) on keep the native downloader', async () => {
+  const loadWith = async (stored) => {
+    const ctxBg = (() => {
+      const stub = () => new Proxy(function () {}, {
+        get: (target, prop) => (Object.prototype.hasOwnProperty.call(target, prop) ? target[prop] : (prop === 'then' ? undefined : stub())),
+        apply: () => stub()
+      });
+      const browser = stub();
+      const saved = [];
+      browser.storage = { local: { get: () => Promise.resolve({ settings: stored }), set: (v) => { saved.push(v); return Promise.resolve(); }, remove: () => Promise.resolve() }, onChanged: stub() };
+      browser.runtime = { id: 'test', onStartup: stub(), onMessage: stub(), onInstalled: stub(), getPlatformInfo: () => Promise.resolve({ os: 'win' }), getURL: p => p };
+      browser.contextMenus = undefined;
+      browser.commands = undefined;
+      const c = vm.createContext({ browser, chrome: browser, console, URL, URLSearchParams, AbortController, setTimeout, clearTimeout, navigator: { userAgent: 'T' }, fetch: () => Promise.reject(new Error('x')), btoa });
+      vm.runInContext(fs.readFileSync(path.join(root, 'shared.js'), 'utf8'), c);
+      vm.runInContext(fs.readFileSync(path.join(root, 'background.js'), 'utf8'), c);
+      c.__saved = saved;
+      return c;
+    })();
+    await vm.runInContext('settingsReady', ctxBg);
+    return vm.runInContext('settings.downloadMethod', ctxBg);
+  };
+  assert.equal(await loadWith({ showDownloadIcon: true }), 'native');
+  assert.equal(await loadWith({ showDownloadIcon: false }), 'browser');
+  assert.equal(await loadWith({ showDownloadIcon: true, downloadMethod: 'browser' }), 'browser');
+  assert.equal(await loadWith(undefined), 'browser');
+});
+
+// ── Phase 3: direct stream links → web player ───────────────────────────────
+
+test('buildLinkRedirectRules: rules per setting, DASH always on Shaka, engine respected', () => {
+  const page = p => `chrome-extension://id/${p}`;
+  const rules = s => JSON.parse(JSON.stringify(bg.buildLinkRedirectRules(s, page)));
+  assert.equal(rules({ openStreamLinks: false, openMp4Links: false }).length, 0);
+  const hls = rules({ openStreamLinks: true, webPlayerEngine: 'vidstack' });
+  assert.deepEqual(hls.map(r => r.id), [1001, 1002]);
+  assert.equal(hls[0].action.redirect.regexSubstitution, 'chrome-extension://id/player.html#\\0');
+  assert.equal(hls[1].action.redirect.regexSubstitution, 'chrome-extension://id/player-shaka.html#\\0');
+  assert.deepEqual(hls[0].condition.resourceTypes, ['main_frame']);
+  const shaka = rules({ openStreamLinks: true, openMp4Links: true, webPlayerEngine: 'shaka' });
+  assert.deepEqual(shaka.map(r => r.id), [1001, 1002, 1003]);
+  assert.ok(shaka.every(r => r.action.redirect.regexSubstitution.includes('player-shaka.html')));
+});
+
+test('link rule regex: only the URL path decides, query strings do not', () => {
+  const [hls, dash] = bg.buildLinkRedirectRules({ openStreamLinks: true }, p => p);
+  const [, , mp4] = bg.buildLinkRedirectRules({ openStreamLinks: true, openMp4Links: true }, p => p);
+  const re = r => new RegExp(r.condition.regexFilter, 'i'); // RE2 and JS agree on this subset
+  assert.ok(re(hls).test('https://cdn.example/v/master.m3u8'));
+  assert.ok(re(hls).test('https://cdn.example/v/MASTER.M3U8?token=1#t=5'));
+  assert.ok(re(dash).test('http://cdn.example/a/manifest.mpd?x=1'));
+  assert.ok(re(mp4).test('https://cdn.example/clip.mp4'));
+  assert.ok(!re(hls).test('https://site.example/page.html?next=a.m3u8'));
+  assert.ok(!re(hls).test('https://site.example/watch#a.m3u8'));
+  assert.ok(!re(hls).test('https://site.example/a.m3u8.html'));
+  assert.ok(!re(hls).test('chrome-extension://id/player.html?url=https%3A%2F%2Fx%2Fa.m3u8'));
+});
+
+// ── Phase 2: subtitle language / label ──────────────────────────────────────
+
+test('describeSubtitle: language from file name, query string or <track>, readable label', () => {
+  const d = (url, label, lang) => { const r = shared.describeSubtitle(url, label, lang); return `${r.lang}|${r.label}`; };
+  assert.equal(d('https://x/Show.S01E02.en.srt'), 'en|English');
+  assert.equal(d('https://x/movie.pt-BR.vtt'), 'pt-BR|Portuguese (BR)');
+  assert.equal(d('https://x/subs_eng.vtt'), 'en|English');
+  assert.equal(d('https://x/English.srt'), 'en|English');
+  assert.equal(d('https://x/en.srt'), 'en|English');
+  assert.equal(d('https://x/api/sub?id=4&lang=fr'), 'fr|French');
+  assert.equal(d('https://x/Ep1.v190.chi.srt'), 'zh|Chinese');
+  // two-letter words inside a name are not languages
+  assert.equal(d('https://x/do_it.srt'), '|do_it.srt');
+  // a <track> label and srclang win
+  assert.equal(d('https://x/a.vtt', 'Director commentary', 'de'), 'de|Director commentary');
+  assert.equal(d('https://x/a.vtt', '', 'ja'), 'ja|Japanese');
+  // unknown srclang values are kept as they are
+  assert.equal(d('https://x/a.vtt', 'Custom', 'xx-custom'), 'xx-custom|Custom');
+});
+
+// ── Phase 1: domain rules ────────────────────────────────────────────────────
+
+test('domain rules: whole-label suffix match, not substring', () => {
+  assert.equal(shared.matchesDomainList('roads.com.au', ['ads.com']), false);
+  assert.equal(shared.matchesDomainList('ads.com', ['ads.com']), true);
+  assert.equal(shared.matchesDomainList('x.y.ads.com', ['ads.com']), true);
+  assert.equal(shared.matchesDomainList('www.youtube.com', ['youtube']), true);
+  assert.equal(shared.matchesDomainList('notyoutube.com', ['youtube']), false);
+  assert.equal(shared.matchesDomainList('localhost', ['localhost']), true);
+  // entries typed as URLs or with wildcards are normalised
+  assert.equal(shared.matchesDomainList('a.example.org', ['https://example.org/path']), true);
+  assert.equal(shared.matchesDomainList('a.example.org', ['*.example.org']), true);
+  assert.equal(shared.matchesDomainList('', ['example.org']), false);
+});
+
+test('domain rules: exact (-), regex (~) and exception (!) prefixes', () => {
+  assert.equal(shared.matchesDomainList('www.example.com', ['-example.com']), false);
+  assert.equal(shared.matchesDomainList('example.com', ['-example.com']), true);
+  assert.equal(shared.matchesDomainList('cdn12.site.net', ['~^cdn\\d+\\.']), true);
+  assert.equal(shared.matchesDomainList('cdn.site.net', ['~^cdn\\d+\\.']), false);
+  assert.equal(shared.matchesDomainList('good.example.com', ['example.com', '!good.example.com']), false);
+  assert.equal(shared.matchesDomainList('bad.example.com', ['example.com', '!good.example.com']), true);
+  // an invalid regex is ignored and reported, never thrown
+  assert.equal(shared.matchesDomainList('a.com', ['~([']), false);
+  assert.equal(shared.validateDomainList(['ok.com', '~([', '# note']).length, 1);
+});
+
+test('isDomainAllowed: whitelist beats blacklist, rules use the shared matcher', () => {
+  run(`settings.whitelist = ['video.ads.com']; settings.blacklist = ['ads.com'];`);
+  assert.equal(bg.isDomainAllowed('video.ads.com'), true);
+  assert.equal(bg.isDomainAllowed('www.ads.com'), false);
+  assert.equal(bg.isDomainAllowed('roads.com.au'), true);
+  run(`settings.whitelist = []; settings.blacklist = [];`);
+});
+
+// ── Phase 1: custom patterns ─────────────────────────────────────────────────
+
+test('custom patterns: parse types, flags, comments and errors', () => {
+  const text = [
+    '# my sites', 'm3u8 /cdn\\.example\\.com\\/play\\/\\d+/i', 'hls /x\\/manifest/', '// c',
+    'video /\\/get_file\\//g', 'bogus /a/', 'mp4 nonsense', 'mpd //', 'ts /([/'
+  ].join('\n');
+  const { rules, errors } = shared.parseCustomPatterns(text);
+  assert.equal(rules.length, 3);
+  assert.equal(rules[0].type, 'm3u8');
+  assert.equal(rules[1].type, 'm3u8'); // alias
+  assert.equal(rules[2].re.flags, ''); // g stripped so repeated tests are stateless
+  deepEqual(errors.map(e => e.line), [6, 7, 8, 9]);
+  assert.equal(shared.matchCustomPattern(text, 'https://CDN.example.com/play/42'), 'm3u8');
+  assert.equal(shared.matchCustomPattern(text, 'https://a/get_file/1'), 'video');
+  assert.equal(shared.matchCustomPattern(text, 'https://a/get_file/1'), 'video'); // twice: no lastIndex state
+  assert.equal(shared.matchCustomPattern(text, 'https://nothing.example/'), null);
+});
+
+// ── Phase 1: classification ──────────────────────────────────────────────────
+
+test('classifyUrl: custom patterns override the built-in filters', () => {
+  run(`settings.customPatterns = 'm3u8 /cdn\\\\.example\\\\.com\\\\/play\\\\/\\\\d+/\\nsubtitle /captions\\\\/\\\\d+/';`);
+  const stream = bg.classifyUrl('https://cdn.example.com/play/42/index.php', '', 'xmlhttprequest');
+  assert.equal(stream.kind, 'stream');
+  assert.equal(stream.type, 'm3u8');
+  assert.equal(bg.classifyUrl('https://a.example/captions/7/en', '', 'xmlhttprequest').kind, 'subtitle');
+  assert.equal(bg.classifyUrl('https://cdn.example.com/play/x/index.php', '', 'xmlhttprequest'), null);
+  run(`settings.customPatterns = '';`);
+  assert.equal(bg.classifyUrl('https://cdn.example.com/play/42/index.php', '', 'xmlhttprequest'), null);
+});
+
+test('classifyUrl: stream URL carried in a query parameter', () => {
+  const proxied = 'https://proxy.example/get.php?u=' + encodeURIComponent('https://cdn.example/v/master.m3u8?t=1');
+  // plain "shouldSkipUrl" rejects every .php URL; the embedded stream makes it a stream anyway
+  assert.equal(bg.shouldSkipUrl(proxied), true);
+  const found = bg.classifyUrl(proxied, '', 'xmlhttprequest');
+  assert.equal(found.kind, 'stream');
+  assert.equal(found.type, 'm3u8');
+  assert.equal(bg.classifyUrl('https://proxy.example/get.php?u=' + encodeURIComponent('https://cdn.example/clip.mp4'), '', '').type, 'mp4');
+  // a tracker that merely mentions a video is still a tracker
+  assert.equal(bg.classifyUrl('https://analytics.example/collect.php?v=' + encodeURIComponent('https://cdn.example/clip.mp4'), '', ''), null);
+  // ordinary query parameters are not mistaken for streams
+  assert.equal(bg.classifyUrl('https://site.example/page.php?next=' + encodeURIComponent('https://other.example/index.html'), '', ''), null);
+});
+
+test('classifyUrl: "media" requests are streams unless they are audio', () => {
+  assert.equal(bg.classifyUrl('https://cdn.example/get?id=42&sig=abcdef', 'video/mp4', 'media').kind, 'stream');
+  assert.equal(bg.classifyUrl('https://cdn.example/get?id=42&sig=abcdef', '', 'media').kind, 'stream');
+  assert.equal(bg.classifyUrl('https://cdn.example/get?id=42&sig=abcdef', 'audio/mpeg', 'media'), null);
+  assert.equal(bg.classifyUrl('https://cdn.example/get?id=42&sig=abcdef', '', 'xmlhttprequest'), null);
+  assert.equal(bg.classifyUrl('blob:https://cdn.example/1234', '', 'media'), null);
+  assert.equal(bg.getStreamType('https://cdn.example/get?id=42', 'video/mp4'), 'mp4');
+});
+
+test('isUsableStatus: errors and empty responses are ignored', () => {
+  for (const code of [404, 403, 500, 204]) assert.equal(bg.isUsableStatus(code), false);
+  for (const code of [200, 206, 301, 302, 304, undefined]) assert.equal(bg.isUsableStatus(code), true);
+});
+
+// ── Phase 1: page titles ─────────────────────────────────────────────────────
+
+test('cleanPageTitle: site name, filler and episode numbers', () => {
+  const t = (title, host) => shared.cleanPageTitle(title, host).title;
+  assert.equal(t('Watch Dark Matter Season 1 Episode 5 Online Free - KissKH', 'kisskh.co'), 'Dark Matter S01E05');
+  assert.equal(t('Dark Matter S01E05 | Netflix', 'www.netflix.com'), 'Dark Matter S01E05');
+  assert.equal(t('Dark Matter - Episode 12 - Watch Online Free', 'example.org'), 'Dark Matter E12');
+  assert.equal(t('Big Buck Bunny (2008) - Example Movies', 'examplemovies.net'), 'Big Buck Bunny (2008)');
+  assert.equal(t('Chapter 3: The Return', 'learn.example.edu'), 'Chapter 3: The Return');
+  const info = shared.cleanPageTitle('Dark Matter Season 2 Episode 7 - Site', 'site.tv');
+  assert.deepEqual([info.name, info.season, info.episode], ['Dark Matter', 2, 7]);
+});
+
+test('cleanPageTitle: real titles that look like filler survive', () => {
+  const t = (title, host) => shared.cleanPageTitle(title, host).title;
+  assert.equal(t('Born Free', 'example.com'), 'Born Free');
+  assert.equal(t('Free Guy', 'example.com'), 'Free Guy');
+  assert.equal(t('Watch Born Free Online Free', 'example.com'), 'Born Free');
+  assert.equal(t('The Online Dating Show', 'example.com'), 'The Online Dating Show');
+});
+
+test('cleanPageTitle: non-Latin titles are kept, URL-like or empty titles give nothing', () => {
+  const t = (title, host) => shared.cleanPageTitle(title, host).title;
+  assert.equal(t('进击的巨人 第一季 - bilibili', 'www.bilibili.com'), '进击的巨人 第一季');
+  assert.equal(t('Тихий Дон — серия 3 | rutube', 'rutube.ru'), 'Тихий Дон E03');
+  assert.equal(t('', 'example.com'), '');
+  assert.equal(t('https://example.com/watch?v=1', 'example.com'), '');
+  // a title that is only the site name is no use as a name: callers fall back to the file name
+  assert.equal(t('KissKH', 'kisskh.co'), '');
+});
+

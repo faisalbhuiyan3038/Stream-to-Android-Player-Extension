@@ -1,15 +1,19 @@
 {
   "name": "stream-to-android-player-extension",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Browser extension (Chrome/Edge/Firefox, desktop + Android) that detects streaming videos and sends them to an external player.",
   "main": "background.js",
   "scripts": {
-    "test": "node --test tests/host.test.js tests/handler.test.js tests/unit.test.js",
+    "test": "node --test tests/host.test.js tests/handler.test.js tests/unit.test.js tests/subtitles.test.mjs tests/page-params.test.mjs tests/player-memory.test.mjs tests/prefetch.test.mjs tests/mp4-merge.test.mjs tests/downloader.test.mjs tests/segment-store.test.mjs",
+    "make-fixture": "node tests/e2e/make-fixture.js",
     "test:e2e": "node --test --test-concurrency=1 tests/e2e/chromium.test.js",
+    "test:e2e:mobile": "node --test --test-concurrency=1 tests/e2e/mobile.test.js",
+    "audit:mobile": "node tests/e2e/mobile-audit.js",
     "test:e2e:firefox": "node --test --test-concurrency=1 tests/e2e/firefox.test.js",
     "build:vidstack": "esbuild src/player.js --bundle --minify --format=esm --outfile=player.bundle.js",
     "build:shaka": "esbuild src/player-shaka.js --bundle --minify --format=iife --global-name=ShakaInit --outfile=player-shaka.bundle.js",
-    "build": "npm run build:vidstack && npm run build:shaka",
+    "build:download": "esbuild src/download.js --bundle --minify --format=iife --outfile=download.bundle.js",
+    "build": "npm run build:vidstack && npm run build:shaka && npm run build:download",
     "target:chrome": "node scripts/build-extension.js --target=chrome",
     "target:firefox": "node scripts/build-extension.js --target=firefox",
     "package": "node scripts/build-extension.js --package"

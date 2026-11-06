@@ -13,7 +13,7 @@ const LIKELY_MEDIA_URL = /\.(m3u8?|mpd|mp4|ts|vtt|srt|ass|ssa)(\?|#|$)|manifest|
 const defaultSettings = {
   showCopyIcon: true,
   showPlayIcon: true,
-  showDownloadIcon: false,
+  showDownloadIcon: true,
   defaultTapAction: 'default',
   androidPlayer: 'auto',
   buttonVisibility: 'always' // 'always' | 'fade' (translucent when idle) | 'never'
@@ -59,7 +59,7 @@ function updateMenu() {
 
   menu.replaceChildren(...streams.map(stream => {
     const name = stream.displayName || stream.name;
-    const subtitle = stream.pageTitle || '';
+    const subtitle = stream.title || stream.pageTitle || '';
 
     const item = document.createElement('div');
     item.className = 'stream-item';
@@ -149,8 +149,8 @@ function updateMenu() {
       actions.appendChild(createActionButton('v-action-play', 'Play in Browser', '▶️'));
     }
 
-    if (extPlatform !== 'android' && extSettings.showDownloadIcon) {
-      actions.appendChild(createActionButton('v-action-download', 'Download with yt-dlp / ffmpeg', '⬇️'));
+    if (extSettings.showDownloadIcon) {
+      actions.appendChild(createActionButton('v-action-download', 'Download as MP4', '⬇️'));
     }
 
     item.appendChild(info);
@@ -264,7 +264,7 @@ function updateMenu() {
         .stream-item { padding: 12px 12px !important; }
         .stream-name { font-size: 15px !important; }
         .v-handler-btn { min-width: 44px !important; min-height: 44px !important; font-size: 22px !important; }
-        .v-quality { font-size: 13px !important; padding: 4px !important; }
+        .v-quality { font-size: 14px !important; padding: 4px 6px !important; min-height: 40px !important; min-width: 64px !important; }
         .quality-badge, .duration-badge, .sub-badge { font-size: 12px !important; }
       }
     `;
@@ -313,7 +313,7 @@ function updateMenu() {
       } else if (action === 'download') {
         runBackground('downloadStream', el);
       } else {
-        shareUrl(url, stream.displayName || stream.name || ''); // default/share
+        shareUrl(url, stream.title || stream.displayName || stream.name || ''); // default/share
       }
     };
 
@@ -656,6 +656,8 @@ function setupVideoObserver() {
       const resources = [];
       for (const entry of performance.getEntriesByType('resource')) {
         if (seenResources.has(entry.name) || !LIKELY_MEDIA_URL.test(entry.name)) continue;
+        // responseStatus (newer browsers) is 0 when it is hidden from us; only real errors are skipped
+        if (entry.responseStatus >= 400) continue;
         seenResources.add(entry.name);
         resources.push(entry.name);
       }

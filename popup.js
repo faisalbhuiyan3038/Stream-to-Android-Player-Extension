@@ -11,7 +11,7 @@ const defaults = {
   blacklist: [],
   showCopyIcon: true,
   showPlayIcon: true,
-  showDownloadIcon: false,
+  showDownloadIcon: true,
   defaultTapAction: 'default',
   webPlayerEngine: 'vidstack',
   desktopExternalMethod: 'native',
@@ -23,7 +23,14 @@ const defaults = {
   downloadDir: '',
   forwardCookies: false,
   androidPlayer: 'auto',
-  vlcHttpPassword: ''
+  vlcHttpPassword: '',
+  customPatterns: '',
+  openStreamLinks: false,
+  openMp4Links: false,
+  fastBuffering: true,
+  fastBufferingParallel: 4,
+  bufferAheadSeconds: 0,
+  downloadMethod: 'browser'
 };
 
 let currentDomain = '';
@@ -50,6 +57,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('max-streams-value').textContent = settings.maxStreams;
   document.getElementById('whitelist').value = (settings.whitelist || []).join('\n');
   document.getElementById('blacklist').value = (settings.blacklist || []).join('\n');
+  document.getElementById('custom-patterns').value = settings.customPatterns || '';
+  document.getElementById('toggle-open-stream-links').checked = !!settings.openStreamLinks;
+  document.getElementById('toggle-open-mp4-links').checked = !!settings.openMp4Links;
+  document.getElementById('toggle-open-stream-links').addEventListener('change', e => saveSettings({ openStreamLinks: e.target.checked }));
+  document.getElementById('toggle-open-mp4-links').addEventListener('change', e => saveSettings({ openMp4Links: e.target.checked }));
+  const fastToggle = document.getElementById('toggle-fast-buffering');
+  const fastOptions = document.getElementById('fast-buffering-options');
+  fastToggle.checked = settings.fastBuffering !== false;
+  fastOptions.style.display = fastToggle.checked ? '' : 'none';
+  document.getElementById('fast-buffering-parallel').value = String(settings.fastBufferingParallel || 4);
+  document.getElementById('buffer-ahead').value = String(settings.bufferAheadSeconds || 0);
+  fastToggle.addEventListener('change', e => {
+    fastOptions.style.display = e.target.checked ? '' : 'none';
+    saveSettings({ fastBuffering: e.target.checked });
+  });
+  document.getElementById('fast-buffering-parallel').addEventListener('change', e => saveSettings({ fastBufferingParallel: parseInt(e.target.value, 10) }));
+  document.getElementById('buffer-ahead').addEventListener('change', e => saveSettings({ bufferAheadSeconds: parseInt(e.target.value, 10) }));
 
   // Floating button controls (all platforms)
   document.getElementById('button-visibility').value = settings.buttonVisibility;
@@ -62,6 +86,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('android-default-action').value = settings.defaultTapAction;
     document.getElementById('android-player').addEventListener('change', e => saveSettings({ androidPlayer: e.target.value }));
     document.getElementById('android-default-action').addEventListener('change', e => saveSettings({ defaultTapAction: e.target.value }));
+    document.getElementById('android-web-player-engine').value = settings.webPlayerEngine;
+    document.getElementById('android-web-player-engine').addEventListener('change', e => saveSettings({ webPlayerEngine: e.target.value }));
+    document.getElementById('android-download-icon').checked = settings.showDownloadIcon;
+    document.getElementById('android-download-icon').addEventListener('change', e => saveSettings({ showDownloadIcon: e.target.checked }));
   }
 
   if (platform !== 'android') {
@@ -149,6 +177,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('toggle-copy-icon').addEventListener('change', e => saveSettings({ showCopyIcon: e.target.checked }));
     document.getElementById('toggle-play-icon').addEventListener('change', e => saveSettings({ showPlayIcon: e.target.checked }));
     document.getElementById('toggle-download-icon').addEventListener('change', e => saveSettings({ showDownloadIcon: e.target.checked }));
+    document.getElementById('download-method').value = settings.downloadMethod || 'browser';
+    document.getElementById('download-method').addEventListener('change', e => saveSettings({ downloadMethod: e.target.value }));
     document.getElementById('toggle-forward-cookies').addEventListener('change', e => saveSettings({ forwardCookies: e.target.checked }));
     document.getElementById('native-args-template').addEventListener('change', e => saveSettings({ nativeArgsTemplate: e.target.value }));
     document.getElementById('download-dir').addEventListener('change', e => saveSettings({ downloadDir: e.target.value }));
@@ -189,7 +219,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       document.getElementById('current-domain').textContent = currentDomain;
 
       // Check if current domain is blacklisted
-      const isBlacklisted = settings.blacklist.some(d => currentDomain.includes(d));
+      const isBlacklisted = StreamShared.matchesDomainList(currentDomain, settings.blacklist) &&
+        !StreamShared.matchesDomainList(currentDomain, settings.whitelist);
       document.getElementById('toggle-site').checked = !isBlacklisted;
 
       // Get stream count for this tab
@@ -237,8 +268,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     let blacklist = settings.blacklist || [];
 
     if (e.target.checked) {
-      // Remove from blacklist
-      blacklist = blacklist.filter(d => d !== currentDomain);
+      // Remove every positive rule that blocks this host (e.g. "example.com" for www.example.com)
+      blacklist = blacklist.filter(d => {
+        const rule = StreamShared.parseDomainRule(d);
+        return !rule || rule.negate || !StreamShared.matchesDomainRule(currentDomain, rule);
+      });
     } else {
       // Add to blacklist
       if (!blacklist.includes(currentDomain)) {
@@ -251,18 +285,52 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('blacklist').value = blacklist.join('\n');
   });
 
-  // Save lists button
+  // Live validation of the lists and the custom patterns
+  const showListErrors = () => {
+    const errors = [
+      ...StreamShared.validateDomainList(parseDomainList(document.getElementById('whitelist').value)).map(e => 'Whitelist: ' + e),
+      ...StreamShared.validateDomainList(parseDomainList(document.getElementById('blacklist').value)).map(e => 'Blacklist: ' + e)
+    ];
+    const el = document.getElementById('domain-list-error');
+    el.textContent = errors.join('\n');
+    el.style.display = errors.length ? 'block' : 'none';
+    return errors.length === 0;
+  };
+  const showPatternStatus = () => {
+    const { rules, errors } = StreamShared.parseCustomPatterns(document.getElementById('custom-patterns').value);
+    const el = document.getElementById('custom-patterns-status');
+    if (errors.length) {
+      el.textContent = errors.map(e => `Line ${e.line}: ${e.message}`).join('\n');
+      el.classList.remove('ok');
+      el.style.display = 'block';
+    } else if (rules.length) {
+      el.textContent = `${rules.length} pattern${rules.length === 1 ? '' : 's'} OK`;
+      el.classList.add('ok');
+      el.style.display = 'block';
+    } else {
+      el.style.display = 'none';
+    }
+    return errors.length === 0;
+  };
+  for (const id of ['whitelist', 'blacklist']) document.getElementById(id).addEventListener('input', showListErrors);
+  document.getElementById('custom-patterns').addEventListener('input', showPatternStatus);
+  showPatternStatus();
+
+  // Save lists button (invalid lines are reported and skipped, the rest is saved)
   document.getElementById('save-lists').addEventListener('click', () => {
     const whitelist = parseDomainList(document.getElementById('whitelist').value);
     const blacklist = parseDomainList(document.getElementById('blacklist').value);
-    saveSettings({ whitelist, blacklist });
+    const customPatterns = document.getElementById('custom-patterns').value;
+    const listsOk = showListErrors();
+    const patternsOk = showPatternStatus();
+    saveSettings({ whitelist, blacklist, customPatterns });
 
     // Visual feedback
     const btn = document.getElementById('save-lists');
-    btn.textContent = '✓ Saved';
+    btn.textContent = listsOk && patternsOk ? '✓ Saved' : '✓ Saved (see errors)';
     btn.classList.add('saved');
     setTimeout(() => {
-      btn.textContent = 'Save Lists';
+      btn.textContent = 'Save Lists & Patterns';
       btn.classList.remove('saved');
     }, 1500);
   });
@@ -333,6 +401,12 @@ async function renderStreamList(tabId, settings, platform) {
     name.textContent = stream.displayName || stream.name;
     name.title = stream.url;
     info.appendChild(name);
+    if (stream.title) {
+      const sub = document.createElement('span');
+      sub.className = 'stream-row-title';
+      sub.textContent = stream.title;
+      info.appendChild(sub);
+    }
 
     const meta = document.createElement('div');
     meta.className = 'stream-row-meta';
@@ -386,7 +460,7 @@ async function renderStreamList(tabId, settings, platform) {
 
     if (isAndroid) {
       addButton('📤', 'Share / open in player', async () => {
-        StreamShared.shareToAndroid(window, effective(), stream.displayName || stream.name, settings.androidPlayer, subtitles[0] && subtitles[0].url);
+        StreamShared.shareToAndroid(window, effective(), stream.title || stream.displayName || stream.name, settings.androidPlayer, subtitles[0] && subtitles[0].url);
         return true;
       });
     } else {
@@ -394,8 +468,8 @@ async function renderStreamList(tabId, settings, platform) {
     }
     addButton('📋', 'Copy URL', async () => { await navigator.clipboard.writeText(effective()); return true; });
     addButton('▶️', 'Play in Browser', viaBackground('openWebPlayer'));
-    if (!isAndroid && settings.showDownloadIcon) {
-      addButton('⬇️', 'Download with yt-dlp / ffmpeg', viaBackground('downloadStream'));
+    if (settings.showDownloadIcon) {
+      addButton('⬇️', 'Download as MP4', viaBackground('downloadStream'));
     }
 
     row.appendChild(info);
@@ -406,11 +480,13 @@ async function renderStreamList(tabId, settings, platform) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// One rule per line (see StreamShared.parseDomainRule). Regex rules (~…) keep their case.
 function parseDomainList(text) {
   return text
     .split('\n')
-    .map(line => line.trim().toLowerCase())
-    .filter(line => line.length > 0 && line.includes('.'));
+    .map(line => line.trim())
+    .filter(line => line.length > 0 && !line.startsWith('#'))
+    .map(line => (/^[!\-]*~/.test(line) ? line : line.toLowerCase()));
 }
 
 async function saveSettings(partial) {

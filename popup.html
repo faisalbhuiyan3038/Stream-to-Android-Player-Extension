@@ -52,6 +52,64 @@
       </label>
     </div>
 
+    <!-- Direct stream links -->
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-title">Open stream links in the web player</span>
+        <span class="setting-desc">Going to a .m3u8 or .mpd address plays it here instead of downloading or showing text</span>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="toggle-open-stream-links">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-title">… also .mp4 links</span>
+        <span class="setting-desc">Off: clicking an .mp4 link keeps the browser's own behaviour (play or download)</span>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="toggle-open-mp4-links">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <!-- Faster buffering (built-in players) -->
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-title">Faster buffering in the browser player</span>
+        <span class="setting-desc">Downloads upcoming segments in parallel and keeps a deeper buffer (HLS / DASH)</span>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="toggle-fast-buffering" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div id="fast-buffering-options" class="setting-row column">
+      <div class="setting-label">
+        <span class="setting-title">Parallel downloads</span>
+        <span class="setting-desc">Maximum; it ramps up only while it makes loading faster</span>
+      </div>
+      <select id="fast-buffering-parallel" class="select-dropdown">
+        <option value="2">2</option>
+        <option value="4">4</option>
+        <option value="6">6</option>
+        <option value="8">8</option>
+      </select>
+      <div class="setting-label" style="margin-top: 8px;">
+        <span class="setting-title">Buffer ahead</span>
+        <span class="setting-desc">How much video to load before it is needed</span>
+      </div>
+      <select id="buffer-ahead" class="select-dropdown">
+        <option value="0">Automatic (2 min, 1 min on phones)</option>
+        <option value="60">1 minute</option>
+        <option value="120">2 minutes</option>
+        <option value="300">5 minutes</option>
+        <option value="600">10 minutes</option>
+      </select>
+    </div>
+
     <!-- Max streams slider -->
     <div class="setting-row column">
       <div class="setting-label">
@@ -121,6 +179,28 @@
           <option value="browser">Play in Browser</option>
         </select>
       </div>
+
+      <div class="setting-row column">
+        <div class="setting-label">
+          <span class="setting-title">Browser player</span>
+          <span class="setting-desc">Used by "Play in Browser" and opened stream links</span>
+        </div>
+        <select id="android-web-player-engine" class="select-dropdown">
+          <option value="vidstack">Vidstack (HLS / MP4)</option>
+          <option value="shaka">Shaka Player (HLS / DASH / MP4, quality &amp; speed menus)</option>
+        </select>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-label">
+          <span class="setting-title">Show download button</span>
+          <span class="setting-desc">⬇️ saves the stream as an MP4 file (needs free storage of about twice the video's size while downloading)</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="android-download-icon">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
     </div>
 
     <!-- Desktop Settings (hidden on Android) -->
@@ -153,12 +233,23 @@
       <div class="setting-row">
         <div class="setting-label">
           <span class="setting-title">Show Download Icon</span>
-          <span class="setting-desc">Needs the native host + yt-dlp or ffmpeg</span>
+          <span class="setting-desc">⬇️ saves the stream as an MP4 file</span>
         </div>
         <label class="toggle">
           <input type="checkbox" id="toggle-download-icon">
           <span class="toggle-slider"></span>
         </label>
+      </div>
+
+      <div class="setting-row column">
+        <div class="setting-label">
+          <span class="setting-title">Download with</span>
+          <span class="setting-desc">Built-in: no setup, HLS/DASH → one MP4 in the browser. yt-dlp/ffmpeg: needs the native host (see below); also handles sites the built-in one cannot</span>
+        </div>
+        <select id="download-method" class="select-dropdown">
+          <option value="browser">Built-in downloader (MP4)</option>
+          <option value="native">yt-dlp / ffmpeg (native host)</option>
+        </select>
       </div>
 
       <div class="setting-row">
@@ -190,8 +281,8 @@
           <span class="setting-title">Web Player Engine</span>
         </div>
         <select id="web-player-engine" class="select-dropdown">
-          <option value="vidstack">Vidstack (HLS / DASH / MP4)</option>
-          <option value="shaka">Shaka Player (HLS / DASH / MP4)</option>
+          <option value="vidstack">Vidstack (HLS / MP4; DASH opens in Shaka)</option>
+          <option value="shaka">Shaka Player (HLS / DASH / MP4, quality &amp; speed menus)</option>
         </select>
       </div>
 
@@ -253,12 +344,27 @@
         <span class="setting-desc">Never detect on these domains</span>
       </div>
       <textarea id="blacklist" class="domain-list" placeholder="noisy-site.com&#10;ads.example.com" rows="3"></textarea>
+      <span class="setting-desc" style="margin-top: 4px;">
+        <code>example.com</code> = site and subdomains · <code>-host.com</code> = exactly that host ·
+        <code>~regex</code> = regular expression · <code>!rule</code> = exception
+      </span>
+      <span id="domain-list-error" class="list-error"></span>
     </div>
 
-    <button id="save-lists" class="save-btn">Save Lists</button>
+    <!-- Custom detection patterns -->
+    <div class="list-section">
+      <div class="list-header">
+        <span class="setting-title">Custom detection patterns</span>
+        <span class="setting-desc">Treat URLs matching a regex as a stream. One per line: <code>type /regex/flags</code> (types: m3u8, mpd, mp4, ts, video, subtitle)</span>
+      </div>
+      <textarea id="custom-patterns" class="domain-list" placeholder="m3u8 /cdn\.example\.com\/play\/\d+/i&#10;video /\/get_file\//&#10;subtitle /\/captions\//" rows="3" spellcheck="false"></textarea>
+      <span id="custom-patterns-status" class="list-error"></span>
+    </div>
+
+    <button id="save-lists" class="save-btn">Save Lists &amp; Patterns</button>
 
     <footer class="popup-footer">
-      <span>v1.5</span>
+      <span>v1.6</span>
     </footer>
   </div>
 

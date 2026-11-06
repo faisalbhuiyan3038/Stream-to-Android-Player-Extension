@@ -269,6 +269,26 @@ body {
   gap: 2px;
 }
 
+.stream-row-title {
+  font-size: 11px;
+  color: rgba(255,255,255,0.55);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-error {
+  display: none;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #ff8a80;
+  white-space: pre-line;
+}
+
+.list-error.ok {
+  color: #81c784;
+}
+
 .stream-row-name {
   font-size: 13px;
   font-weight: 500;
@@ -340,4 +360,15 @@ body {
   text-align: center;
   font-size: 10px;
   color: rgba(255,255,255,0.2);
+}
+
+/* Touch screens (Firefox for Android opens the popup as a full page): 44px targets */
+@media (pointer: coarse) {
+  .select-dropdown, .text-input, .save-btn { min-height: 44px; font-size: 15px; }
+  .slider { height: 8px; margin: 18px 0; }
+  .slider::-webkit-slider-thumb { width: 28px; height: 28px; }
+  .slider::-moz-range-thumb { width: 28px; height: 28px; }
+  .row-btn { min-width: 44px; min-height: 44px; font-size: 20px; }
+  .stream-row-actions { gap: 6px; }
+  .domain-list { font-size: 14px; }
 }

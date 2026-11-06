@@ -1,0 +1,113 @@
+/* Shared by player.html (Vidstack) and player-shaka.html (Shaka UI).
+   Mobile first: the page is the whole viewport (dynamic viewport units so the browser's
+   toolbars do not cover the controls), safe-area insets for notches and gesture bars. */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+  background: #000;
+  color: #fff;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#error-message {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: calc(100% - 32px);
+  color: #ff5252;
+  font-size: 16px;
+  text-align: center;
+  z-index: 20;
+  pointer-events: none;
+}
+#error-message:empty { display: none; }
+
+/* Small notice ("Resumed at 12:34 · Start over") */
+#toast {
+  position: fixed;
+  left: 50%;
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  display: none;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 8px 8px 14px;
+  border-radius: 10px;
+  background: rgba(20, 20, 28, 0.92);
+  color: #fff;
+  font-size: 14px;
+  /* above Vidstack's gesture layer and Shaka's controls, or "Start over" cannot be tapped */
+  z-index: 2147483000;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+#toast.visible { display: flex; }
+#toast button {
+  min-height: 40px;
+  min-width: 40px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: #4caf50;
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ── Shaka page ─────────────────────────────────────────────────────────── */
+#player-container {
+  position: fixed;
+  inset: 0;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  background: #000;
+}
+#player-container video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+/* Native cues (plain files in Shaka's src= mode) would sit under the control bar while it is
+   shown: lift them. Chromium only; Firefox has no selector for the cue box. */
+#player-container:has(.shaka-controls-container[shown]) video::-webkit-media-text-track-container {
+  transform: translateY(-72px);
+  transition: transform 0.2s;
+}
+
+/* ── Vidstack page ──────────────────────────────────────────────────────── */
+media-player {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  border-radius: 0;
+}
+media-player media-outlet {
+  width: 100%;
+  height: 100%;
+}
+media-player media-outlet video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Touch screens: controls of at least 44 CSS px (Android asks for 48dp targets) */
+@media (pointer: coarse) {
+  media-player { --media-button-size: 48px; }
+  .shaka-controls-button-panel > *,
+  .shaka-overflow-menu button,
+  .shaka-settings-menu button { min-height: 44px; min-width: 44px; }
+}

@@ -2,6 +2,11 @@
 if (typeof browser === 'undefined') {
   globalThis.browser = chrome;
 }
+// Chromium runs this file as a classic service worker and has to load shared.js itself;
+// Firefox lists shared.js before background.js in manifest.firefox.json.
+if (typeof importScripts === 'function') {
+  importScripts('shared.js');
+}
 
 const NATIVE_HOST = 'stream_player_host';
 
@@ -59,7 +64,7 @@ let settings = {
   blacklist: [],
   showCopyIcon: true,
   showPlayIcon: true,
-  showDownloadIcon: false,
+  showDownloadIcon: true,
   defaultTapAction: 'default', // 'default' will map to 'share' on Android, 'copy' on Desktop
   webPlayerEngine: 'vidstack',
   desktopExternalMethod: 'native',
@@ -71,12 +76,25 @@ let settings = {
   forwardCookies: false,
   androidPlayer: 'auto',
   buttonVisibility: 'always', // floating button: 'always' | 'fade' | 'never'
-  vlcHttpPassword: ''
+  vlcHttpPassword: '',
+  customPatterns: '', // lines of `type /regex/flags`, see StreamShared.parseCustomPatterns
+  openStreamLinks: false, // navigating to a .m3u8 / .mpd URL opens it in the web player
+  openMp4Links: false,    // … and .mp4 too (off by default: it would stop plain .mp4 downloads)
+  fastBuffering: true,    // built-in players: parallel segment downloads + deeper buffer (src/prefetch.mjs)
+  fastBufferingParallel: 4,
+  bufferAheadSeconds: 0,  // 0 = automatic (120 s desktop, 60 s phone)
+  downloadMethod: 'browser' // ⬇️: 'browser' = built-in MP4 downloader (download.html), 'native' = yt-dlp/ffmpeg via the native host
 };
 
 // Load settings on startup
 let settingsReady = browser.storage.local.get('settings').then(result => {
   if (result.settings) {
+    // 1.6 migration: before the built-in downloader, a visible ⬇️ meant yt-dlp/ffmpeg through the
+    // native host. Users who had switched it on keep that; everyone else gets the built-in one.
+    if (result.settings.downloadMethod === undefined && result.settings.showDownloadIcon === true) {
+      result.settings.downloadMethod = 'native';
+      browser.storage.local.set({ settings: { ...result.settings } }).catch(() => {});
+    }
     settings = { ...settings, ...result.settings };
   }
 });
@@ -85,8 +103,56 @@ let settingsReady = browser.storage.local.get('settings').then(result => {
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.settings) {
     settings = { ...settings, ...changes.settings.newValue };
+    syncLinkRedirectRules();
   }
 });
+
+// ─── Direct stream links → web player ────────────────────────────────────────
+// Idea from FastStream (setupRedirectRule): a declarativeNetRequest rule redirects top-level
+// navigations to a stream file into our player. Differences: only the URL *path* is matched
+// (FastStream's pattern also fires for "page.html?next=a.m3u8"), DASH always goes to the
+// Shaka page, and the chosen engine is used for HLS/MP4.
+
+const LINK_RULE_IDS = { streams: 1001, dash: 1002, mp4: 1003 };
+
+// Pure: rules for the given settings. `pageUrl(name)` returns the extension URL of a page.
+function buildLinkRedirectRules(s, pageUrl) {
+  const enginePage = s.webPlayerEngine === 'shaka' ? 'player-shaka.html' : 'player.html';
+  const rule = (id, extensions, page) => ({
+    id,
+    priority: 1,
+    action: { type: 'redirect', redirect: { regexSubstitution: `${pageUrl(page)}#\\0` } },
+    condition: {
+      // scheme://host/path.ext with an optional query or fragment; the extension must end the path
+      regexFilter: `^https?://[^?#]*\\.(?:${extensions})(?:[?#].*)?$`,
+      isUrlFilterCaseSensitive: false,
+      resourceTypes: ['main_frame']
+    }
+  });
+  const rules = [];
+  if (s.openStreamLinks) {
+    rules.push(rule(LINK_RULE_IDS.streams, 'm3u8|m3u', enginePage));
+    rules.push(rule(LINK_RULE_IDS.dash, 'mpd', 'player-shaka.html'));
+  }
+  if (s.openMp4Links) rules.push(rule(LINK_RULE_IDS.mp4, 'mp4|m4v', enginePage));
+  return rules;
+}
+
+let linkRulesSync = Promise.resolve();
+function syncLinkRedirectRules() {
+  if (!browser.declarativeNetRequest || !browser.declarativeNetRequest.updateDynamicRules) return linkRulesSync;
+  linkRulesSync = linkRulesSync.catch(() => {}).then(async () => {
+    await settingsReady;
+    const addRules = buildLinkRedirectRules(settings, page => browser.runtime.getURL(page));
+    try {
+      await browser.declarativeNetRequest.updateDynamicRules({ removeRuleIds: Object.values(LINK_RULE_IDS), addRules });
+    } catch (e) {
+      console.warn('[StreamPlayer] Could not update the stream-link rules:', e);
+    }
+  });
+  return linkRulesSync;
+}
+syncLinkRedirectRules();
 
 // ─── URL filtering ────────────────────────────────────────────────────────────
 
@@ -156,6 +222,54 @@ function isSubtitleUrl(url, contentType) {
   return ct.includes('text/vtt') || ct.includes('application/x-subrip');
 }
 
+// A stream URL carried inside a query parameter, e.g. https://proxy.example/get.php?u=https%3A%2F%2Fcdn%2Fa.m3u8.
+// Returns the inner URL, or ''. (URLSearchParams has already percent-decoded the values.)
+const EMBEDDED_STREAM_RE = /^https?:\/\/[^\s]+?\.(m3u8|mpd|mp4)(?:[?#&].*)?$/i;
+function embeddedStreamUrl(url) {
+  try {
+    for (const value of new URL(url).searchParams.values()) {
+      if (EMBEDDED_STREAM_RE.test(value)) return value;
+    }
+  } catch { /* not a URL */ }
+  return '';
+}
+
+function typeFromExtension(url) {
+  const m = /\.(m3u8|mpd|mp4)(?:[?#&]|$)/i.exec(url);
+  return m ? m[1].toLowerCase() : '';
+}
+
+// Decides what a URL is. Returns { kind: 'stream', type } | { kind: 'subtitle' } | null.
+// `resourceType` is the webRequest type ('media', 'xmlhttprequest', …) when known.
+// Order matters: the user's custom patterns win over every built-in filter, then a stream
+// URL embedded in a query string (which the extension filter below would otherwise reject,
+// e.g. /proxy.php?u=…m3u8), then the built-in skip list, subtitles, and finally streams.
+function classifyUrl(url, contentType, resourceType) {
+  if (!/^https?:/i.test(url)) return null;
+
+  const custom = StreamShared.matchCustomPattern(settings.customPatterns, url);
+  if (custom) return custom === 'subtitle' ? { kind: 'subtitle' } : { kind: 'stream', type: custom };
+
+  const lower = url.toLowerCase();
+  const inner = SKIP_PATTERNS.some(p => lower.includes(p)) ? '' : embeddedStreamUrl(url);
+  if (inner) return { kind: 'stream', type: typeFromExtension(inner) };
+
+  if (shouldSkipUrl(url)) return null;
+  if (isSubtitleUrl(url, contentType)) return { kind: 'subtitle' };
+  if (isStreamUrl(url) || isStreamContent(contentType)) return { kind: 'stream', type: null };
+
+  // Browsers tag the requests behind a <video>/<audio> element as "media": a stream even
+  // when the URL says nothing about it (https://cdn.example/get?id=42). Audio is not.
+  if (resourceType === 'media' && !/^audio\//i.test(contentType || '')) return { kind: 'stream', type: null };
+  return null;
+}
+
+// Client errors, server errors and empty responses are not streams. 206 (range) is.
+function isUsableStatus(statusCode) {
+  if (!statusCode) return true;
+  return !(statusCode >= 400 || statusCode === 204);
+}
+
 // ─── Quality extraction ───────────────────────────────────────────────────────
 
 function extractQuality(url, name) {
@@ -219,7 +333,7 @@ function getStreamType(url, contentType) {
     (contentType && contentType.includes('mpegurl'))) return 'm3u8';
   if (lower.includes('.mpd') ||
     (contentType && contentType.includes('dash'))) return 'mpd';
-  if (lower.includes('.mp4')) return 'mp4';
+  if (lower.includes('.mp4') || (contentType && /video\/mp4/i.test(contentType))) return 'mp4';
   if (lower.includes('.ts')) return 'ts';
   return 'video';
 }
@@ -434,12 +548,10 @@ function isDomainAllowed(domain) {
   if (!domain) return settings.enabled;
 
   // Whitelist overrides blacklist
-  if (settings.whitelist.length > 0 && settings.whitelist.some(d => domain.includes(d))) {
-    return true;
-  }
+  if (StreamShared.matchesDomainList(domain, settings.whitelist)) return true;
 
   // Blacklist blocks
-  if (settings.blacklist.some(d => domain.includes(d))) return false;
+  if (StreamShared.matchesDomainList(domain, settings.blacklist)) return false;
 
   return true;
 }
@@ -509,19 +621,37 @@ function rememberRequestHeaders(details) {
     // Firefox rejects 'extraHeaders' and already exposes every header.
     browser.webRequest.onBeforeSendHeaders.addListener(rememberRequestHeaders, filter, ['requestHeaders']);
   }
+  // Failed requests never reach onHeadersReceived; forget their headers too
+  browser.webRequest.onErrorOccurred.addListener(d => requestHeadersById.delete(d.requestId), filter);
+}
+
+// Requests made by a page's service worker carry tabId -1. Attribute them to a tab showing
+// that origin (the active one first), as FastStream does with the request initiator.
+// Requests of our own extension (initiator chrome-/moz-extension://) match no web tab.
+async function tabForWorkerRequest(details) {
+  const initiator = details.initiator || originOf(details.documentUrl || details.originUrl || '');
+  if (!initiator || !/^https?:/i.test(initiator)) return null;
+  try {
+    const tabs = await browser.tabs.query({});
+    const matching = tabs.filter(t => originOf(t.url || '') === initiator);
+    if (matching.length === 0) return null;
+    return (matching.find(t => t.active) || matching[0]).id;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Add a stream to a tab ───────────────────────────────────────────────────
 
-function addStream(tabId, url, contentType, duration = null, reqHeaders = null) {
-  return runExclusive(tabId, () => addStreamLocked(tabId, url, contentType, duration, reqHeaders));
+function addStream(tabId, url, contentType, duration = null, reqHeaders = null, typeHint = null) {
+  return runExclusive(tabId, () => addStreamLocked(tabId, url, contentType, duration, reqHeaders, typeHint));
 }
 
 // Tabs we opened for the built-in player. While such a tab is still about:blank its
 // own requests would otherwise look like a regular page's streams.
 const playerTabs = new Set();
 
-async function addStreamLocked(tabId, url, contentType, duration, reqHeaders) {
+async function addStreamLocked(tabId, url, contentType, duration, reqHeaders, typeHint) {
   if (playerTabs.has(tabId)) return;
   await settingsReady;
   if (!settings.enabled) return;
@@ -556,7 +686,7 @@ async function addStreamLocked(tabId, url, contentType, duration, reqHeaders) {
     return;
   }
 
-  const streamType = getStreamType(url, contentType);
+  const streamType = typeHint || getStreamType(url, contentType);
 
   // Hide media segments that belong to a playlist we already know about
   if (streamType === 'ts' && streams.some(s => s.type === 'm3u8' && isSegmentOf(url, s))) return;
@@ -595,6 +725,8 @@ async function addStreamLocked(tabId, url, contentType, duration, reqHeaders) {
     quality,
     duration: duration > 0 && isFinite(duration) ? duration : null,
     pageTitle: truncateText(pageTitle, 60),
+    // Cleaned page title ("Dark Matter S01E05"): used for the list, player titles and file names
+    title: StreamShared.cleanPageTitle(pageTitle, getDomain(pageUrl)).title,
     pageUrl: stripHash(pageUrl),
     headers
   };
@@ -624,9 +756,11 @@ function addSubtitle(tabId, url, label = '', lang = '') {
     await storageReady;
     const subs = detectedSubtitles.get(tabId) || [];
     if (subs.length >= 20 || subs.some(s => s.url === url)) return;
-    let fileName = '';
-    try { fileName = decodeURIComponent(url.split('/').pop().split('?')[0]); } catch { fileName = url; }
-    subs.push({ url, label: label || fileName, lang });
+    // Language and a readable label from the <track>, the file name or a ?lang= parameter
+    const d = StreamShared.describeSubtitle(url, label, lang);
+    let finalLabel = d.label;
+    for (let n = 2; subs.some(s => s.label === finalLabel); n++) finalLabel = `${d.label} ${n}`;
+    subs.push({ url, label: finalLabel, lang: d.lang });
     detectedSubtitles.set(tabId, subs);
     saveStreams();
     notifyContentScript(tabId);
@@ -635,9 +769,11 @@ function addSubtitle(tabId, url, label = '', lang = '') {
 
 // ─── Extract video sources from page DOM ──────────────────────────────────────
 
+// Scans the DOM of every frame (embedded players usually live in a cross-origin iframe, where
+// the content script UI does not run). What a sub-frame finds gets that frame's URL as Referer.
 function extractVideoSources(tabId) {
   browser.scripting.executeScript({
-    target: { tabId: tabId },
+    target: { tabId: tabId, allFrames: true },
     func: () => {
       let sources = [];
       let tracks = [];
@@ -665,12 +801,17 @@ function extractVideoSources(tabId) {
       return { href: location.href, sources, tracks };
     }
   }).then(async results => {
-    const found = results?.[0]?.result;
-    if (!found) return;
+    if (!results || results.length === 0) return;
+    const top = results.find(r => r.frameId === 0) || results[0];
+    if (!top || !top.result) return;
     // The tab may have navigated while the script was running; that page was cleared already
     const tab = await browser.tabs.get(tabId);
-    if (stripHash(tab.url) !== stripHash(found.href) || isStaleDocument(tabId, found.href)) return;
-    ingestDomSources(tabId, found.sources, found.tracks);
+    if (stripHash(tab.url) !== stripHash(top.result.href) || isStaleDocument(tabId, top.result.href)) return;
+    for (const r of results) {
+      if (!r || !r.result) continue;
+      const frameHeaders = r === top ? null : { referer: r.result.href, origin: originOf(r.result.href) };
+      ingestDomSources(tabId, r.result.sources, r.result.tracks, [], frameHeaders);
+    }
   }).catch(() => {});
 }
 
@@ -694,12 +835,14 @@ function isStaleDocument(tabId, docUrl) {
   return stripHash(docUrl) !== stripHash(pending.url);
 }
 
-function ingestDomSources(tabId, sources = [], tracks = [], resources = []) {
+// `frameHeaders` ({referer, origin}) is set for sources found inside a sub-frame.
+function ingestDomSources(tabId, sources = [], tracks = [], resources = [], frameHeaders = null) {
   for (const item of sources) {
     const url = typeof item === 'string' ? item : item.url;
     const duration = typeof item === 'string' ? null : item.duration;
-    if (!shouldSkipUrl(url) && isStreamUrl(url)) {
-      addStream(tabId, url, '', duration);
+    const found = classifyUrl(url, '', '');
+    if (found && found.kind === 'stream') {
+      addStream(tabId, url, '', duration, frameHeaders, found.type);
     }
   }
   for (const track of tracks) {
@@ -707,9 +850,10 @@ function ingestDomSources(tabId, sources = [], tracks = [], resources = []) {
   }
   // URLs the page already requested (resource timing); duplicates are dropped by addStream/addSubtitle
   for (const url of resources) {
-    if (shouldSkipUrl(url)) continue;
-    if (isSubtitleUrl(url, '')) addSubtitle(tabId, url);
-    else if (isStreamUrl(url)) addStream(tabId, url, '', null);
+    const found = classifyUrl(url, '', '');
+    if (!found) continue;
+    if (found.kind === 'subtitle') addSubtitle(tabId, url);
+    else addStream(tabId, url, '', null, null, found.type);
   }
 }
 
@@ -742,7 +886,7 @@ async function buildContext(tabId, url, streamUrl) {
     tabId,
     url,
     stream,
-    title: (stream && (stream.pageTitle || stream.displayName)) || '',
+    title: (stream && (stream.title || stream.pageTitle || stream.displayName)) || '',
     referer,
     origin: h.origin || originOf(referer),
     ua: h.userAgent || navigator.userAgent,
@@ -753,10 +897,29 @@ async function buildContext(tabId, url, streamUrl) {
 
 // ─── Web player (with Referer/Origin rewrite) ────────────────────────────────
 
+// One session rule per player tab (id tabId+1) that makes the player's requests look like the
+// page's: Referer, Origin and, when "Forward cookies" is on, Cookie (the player page is another
+// origin, so the browser would not send the CDN's cookies by itself).
+// It is scoped to the tab rather than to URLs on purpose: FastStream sets a 5-second rule per URL
+// because its own downloader announces every request; hls.js and Shaka fetch playlists and
+// segments themselves, often from other hosts, so a URL list cannot be known in advance.
+// The rule is removed when the tab closes or navigates away from the player (removePlayerHeaderRule).
+function playerHeaderRuleHeaders(ctx) {
+  const headers = [];
+  if (ctx.referer) headers.push({ header: 'Referer', operation: 'set', value: ctx.referer });
+  if (ctx.origin) headers.push({ header: 'Origin', operation: 'set', value: ctx.origin });
+  if (ctx.cookie) headers.push({ header: 'Cookie', operation: 'set', value: ctx.cookie });
+  return headers;
+}
+
+function removePlayerHeaderRule(tabId) {
+  if (!browser.declarativeNetRequest) return Promise.resolve();
+  return browser.declarativeNetRequest.updateSessionRules({ removeRuleIds: [tabId + 1] }).catch(() => {});
+}
+
 async function setPlayerHeaderRule(tabId, ctx) {
-  if (!browser.declarativeNetRequest || !ctx.referer) return;
-  const requestHeaders = [{ header: 'Referer', operation: 'set', value: ctx.referer }];
-  if (ctx.origin) requestHeaders.push({ header: 'Origin', operation: 'set', value: ctx.origin });
+  const requestHeaders = playerHeaderRuleHeaders(ctx);
+  if (!browser.declarativeNetRequest || requestHeaders.length === 0) return;
   await browser.declarativeNetRequest.updateSessionRules({
     removeRuleIds: [tabId + 1],
     addRules: [{
@@ -771,19 +934,25 @@ async function setPlayerHeaderRule(tabId, ctx) {
 async function openWebPlayer(ctx) {
   let engine = settings.webPlayerEngine || 'vidstack';
   const isDash = (ctx.stream && ctx.stream.type === 'mpd') || /\.mpd(\?|#|$)/i.test(ctx.url);
-  // Vidstack 0.6 cannot play DASH and has no subtitle loader wired up
-  if (isDash || ctx.subtitles.length > 0) engine = 'shaka';
+  // Vidstack 0.6 cannot play DASH. Both pages load subtitles (converted to WebVTT by src/subtitles.mjs).
+  if (isDash) engine = 'shaka';
   const page = engine === 'shaka' ? 'player-shaka.html' : 'player.html';
 
   const params = new URLSearchParams({ url: ctx.url });
+  if (ctx.title) params.set('title', ctx.title);
   if (ctx.subtitles.length > 0) {
     params.set('subs', JSON.stringify(ctx.subtitles.slice(0, 10).map(s => ({ url: s.url, label: s.label, lang: s.lang }))));
   }
-  const playerUrl = browser.runtime.getURL(`${page}?${params.toString()}`);
+  await openExtensionTab(page, params, ctx);
+}
 
-  const needsRule = !!(browser.declarativeNetRequest && ctx.referer);
-  // Open blank first so the header rule is in place before the player fetches anything
-  const tab = await browser.tabs.create({ url: needsRule ? 'about:blank' : playerUrl });
+// Opens one of our pages (player, downloader) in a new tab with the page's Referer/Origin/Cookie
+// rule in place before the page fetches anything.
+async function openExtensionTab(page, params, ctx) {
+  const pageUrl = browser.runtime.getURL(`${page}?${params.toString()}`);
+  const needsRule = !!(browser.declarativeNetRequest && playerHeaderRuleHeaders(ctx).length);
+  // Open blank first so the header rule is in place before the page fetches anything
+  const tab = await browser.tabs.create({ url: needsRule ? 'about:blank' : pageUrl });
   playerTabs.add(tab.id);
   if (needsRule) {
     try {
@@ -791,8 +960,17 @@ async function openWebPlayer(ctx) {
     } catch (e) {
       console.warn('[StreamPlayer] Could not set player header rule:', e);
     }
-    await browser.tabs.update(tab.id, { url: playerUrl });
+    await browser.tabs.update(tab.id, { url: pageUrl });
   }
+  return tab;
+}
+
+// Built-in downloader (download.html): HLS/DASH/plain files → one MP4, no native host needed
+async function openDownloadPage(ctx) {
+  const params = new URLSearchParams({ url: ctx.url });
+  if (ctx.title) params.set('title', ctx.title);
+  await openExtensionTab('download.html', params, ctx);
+  return { success: true };
 }
 
 // ─── External player / download ──────────────────────────────────────────────
@@ -900,7 +1078,8 @@ async function handleOpenExternalPlayer(ctx) {
 }
 
 async function handleDownload(ctx) {
-  if (currentPlatform === 'android') return { success: false, error: 'Not supported on Android' };
+  // The built-in downloader works everywhere; yt-dlp/ffmpeg through the native host is a desktop option
+  if (currentPlatform === 'android' || settings.downloadMethod !== 'native') return openDownloadPage(ctx);
   return nativeSend({
     action: 'download',
     url: ctx.url,
@@ -978,6 +1157,7 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.type === 'updateSettings') {
     settings = { ...settings, ...message.settings };
     browser.storage.local.set({ settings });
+    syncLinkRedirectRules();
   } else if (message.type === 'getStreamCount') {
     storageReady.then(() => {
       const streams = detectedStreams.get(message.tabId) || [];
@@ -1008,12 +1188,36 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ─── Tab lifecycle ────────────────────────────────────────────────────────────
 
-browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
+browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'complete') {
     pendingNav.delete(tabId);
     extractVideoSources(tabId);
   }
+  // Single-page apps and slow sites set the title after the stream was detected
+  if (changeInfo.title && tab && /^https?:/i.test(tab.url || '')) refreshStreamTitles(tabId, tab);
 });
+
+function refreshStreamTitles(tabId, tab) {
+  return runExclusive(tabId, async () => {
+    await storageReady;
+    const streams = detectedStreams.get(tabId);
+    if (!streams || streams.length === 0) return;
+    const page = stripHash(tab.url);
+    const title = StreamShared.cleanPageTitle(tab.title, getDomain(tab.url)).title;
+    let changed = false;
+    for (const s of streams) {
+      if (s.pageUrl === page && s.title !== title) {
+        s.title = title;
+        s.pageTitle = truncateText(tab.title || '', 60);
+        changed = true;
+      }
+    }
+    if (changed) {
+      saveStreams();
+      notifyContentScript(tabId);
+    }
+  });
+}
 
 browser.tabs.onRemoved.addListener((tabId) => {
   playerTabs.delete(tabId);
@@ -1028,9 +1232,7 @@ browser.tabs.onRemoved.addListener((tabId) => {
     clearTimeout(pendingUpdates.get(tabId));
     pendingUpdates.delete(tabId);
   }
-  if (browser.declarativeNetRequest) {
-    browser.declarativeNetRequest.updateSessionRules({ removeRuleIds: [tabId + 1] }).catch(() => {});
-  }
+  removePlayerHeaderRule(tabId);
 });
 
 // A new top-level navigation starts a fresh page: forget the old streams.
@@ -1041,7 +1243,14 @@ browser.webRequest.onBeforeRequest.addListener(
     if (details.tabId < 0) return;
     const tabId = details.tabId;
     pendingNav.set(tabId, { url: details.url, time: Date.now() });
-    playerTabs.delete(tabId); // the user navigated our player tab to a real page
+    // A web navigation in this tab means it is not (or no longer) our player: its Referer/Cookie
+    // rule must not follow. Done whether or not the tab is in `playerTabs`, because that set is lost
+    // when the MV3 worker is evicted; removing a rule that does not exist is a no-op. Chromium also
+    // reports navigations to our own chrome-extension:// pages here: opening the player must keep it.
+    if (/^https?:/i.test(details.url)) {
+      playerTabs.delete(tabId);
+      removePlayerHeaderRule(tabId);
+    }
     runExclusive(tabId, async () => {
       await storageReady;
       if (!detectedStreams.has(tabId) && !detectedSubtitles.has(tabId)) return;
@@ -1071,22 +1280,19 @@ browser.webRequest.onHeadersReceived.addListener(
 
     await settingsReady;
     if (!settings.enabled) return;
-    if (details.tabId < 0) return; // No tab context
+    if (!isUsableStatus(details.statusCode)) return; // 404 pages, empty 204s, …
 
     const url = details.url;
-    if (shouldSkipUrl(url)) return;
-
     const contentType = details.responseHeaders
       ?.find(h => h.name.toLowerCase() === 'content-type')?.value || '';
 
-    if (isSubtitleUrl(url, contentType)) {
-      addSubtitle(details.tabId, url);
-      return;
-    }
-
-    if (isStreamUrl(url) || isStreamContent(contentType)) {
-      addStream(details.tabId, url, contentType, null, reqHeaders);
-    }
+    const found = classifyUrl(url, contentType, details.type);
+    if (!found) return;
+    // No tab: a service worker's request (or one of our own, which resolves to no tab)
+    const tabId = details.tabId >= 0 ? details.tabId : await tabForWorkerRequest(details);
+    if (tabId == null) return;
+    if (found.kind === 'subtitle') addSubtitle(tabId, url);
+    else addStream(tabId, url, contentType, null, reqHeaders, found.type);
   },
   {
     urls: ["<all_urls>"],
@@ -1109,7 +1315,7 @@ const MENU_ITEMS = [
   { id: 'ctx-external', title: 'Open in external player', action: 'external' },
   { id: 'ctx-browser', title: 'Play in browser player', action: 'browser' },
   { id: 'ctx-copy', title: 'Copy stream URL', action: 'copy' },
-  { id: 'ctx-download', title: 'Download with yt-dlp / ffmpeg', action: 'download' }
+  { id: 'ctx-download', title: 'Download video', action: 'download' }
 ];
 
 if (browser.contextMenus) {

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Download</title>
+  <link rel="stylesheet" href="download.css">
+</head>
+<body>
+  <main class="card">
+    <h1>Download video</h1>
+    <p id="source" class="muted"></p>
+
+    <label class="field">
+      <span>File name</span>
+      <input id="name" type="text" autocomplete="off" spellcheck="false">
+    </label>
+
+    <div id="choices" hidden>
+      <label class="field" id="quality-field">
+        <span>Quality</span>
+        <select id="quality"></select>
+      </label>
+      <label class="field" id="audio-field">
+        <span>Audio</span>
+        <select id="audio"></select>
+      </label>
+      <p id="estimate" class="muted"></p>
+    </div>
+
+    <p id="status" class="status" role="status" aria-live="polite">Reading the stream…</p>
+    <progress id="progress" max="1" value="0" hidden></progress>
+    <p id="warning" class="warning" hidden></p>
+
+    <div class="buttons">
+      <button id="start" type="button" class="primary" disabled>Download MP4</button>
+      <button id="cancel" type="button" hidden>Cancel</button>
+      <button id="again" type="button" hidden>Save again</button>
+    </div>
+    <p class="muted small">The video is downloaded segment by segment into this tab, put together as an MP4 file and saved to your downloads. Keep this tab open until it is done.</p>
+  </main>
+  <script src="download.bundle.js"></script>
+</body>
+</html>

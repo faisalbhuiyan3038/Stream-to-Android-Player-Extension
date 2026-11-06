@@ -1,5 +1,7 @@
 // Local test site used by the browser tests. Nothing here needs the internet.
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 
 const PORT = 8099;
 const ORIGIN = `http://localhost:${PORT}`;
@@ -12,7 +14,7 @@ function page(title, body) {
 }
 
 function startServer() {
-  const log = { secureReferers: [] };
+  const log = { secureReferers: [], cookies: [], segments: [] };
   const server = http.createServer((req, res) => {
     const url = req.url.split('?')[0];
     const send = (status, type, body, extra = {}) => {
@@ -46,8 +48,113 @@ function startServer() {
     }
     if (url === '/p/secure') return html('Secure', `<script>fetch('/secure/index.m3u8')</script>`);
     if (url === '/p/dash') return html('Dash', `<script>fetch('/dash/manifest.mpd')</script>`);
+    // Phase 1 fixtures
+    if (url === '/p/titled') {
+      return html('Watch Dark Matter Season 1 Episode 5 Online Free - Localhost', `<script>fetch('/hls/early.m3u8')</script>`);
+    }
+    if (url === '/p/missing') return html('Missing', `<script>fetch('/hls/missing.m3u8')</script>`);
+    if (url === '/p/proxied') {
+      return html('Proxied', `<script>fetch('/proxy.php?u=' + encodeURIComponent('${ORIGIN}/hls/early.m3u8'))</script>`);
+    }
+    if (url === '/p/custom') return html('Custom', `<script>fetch('/api/play/42')</script>`);
+    if (url === '/p/media') return html('Media', `<video src="${ORIGIN}/get?id=7" controls muted></video>`);
+    if (url === '/p/late-title') {
+      return html('localhost', `<script>setTimeout(() => { document.title = 'Big Buck Bunny (2008) - Localhost'; }, 1500); fetch('/hls/early.m3u8')</script>`);
+    }
+    // A real fMP4 HLS stream (tests/e2e/fixtures/hls, made by make-fixture.js). Under /slow-hls/
+    // every segment answers after 400 ms, like a distant CDN; each request is logged with its
+    // start/end time so tests can see how many ran at once.
+    const hlsMatch = /^\/(hls-real|slow-hls)\/([\w.-]+)$/.exec(url);
+    if (hlsMatch) {
+      const file = path.join(__dirname, 'fixtures', 'hls', hlsMatch[2]);
+      if (!fs.existsSync(file)) return send(404, 'text/plain', 'run npm run make-fixture');
+            const type = file.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : /\.(bin|key)$/.test(file) ? 'application/octet-stream' : 'video/mp4';
+      const isSegment = file.endsWith('.m4s');
+      if (hlsMatch[1] === 'slow-hls' && isSegment) {
+        const entry = { file: hlsMatch[2], start: Date.now(), end: 0 };
+        log.segments.push(entry);
+        return setTimeout(() => { entry.end = Date.now(); send(200, type, fs.readFileSync(file)); }, 400);
+      }
+      return send(200, type, fs.readFileSync(file));
+    }
+
+    // A long stream for the downloader's memory test: the 12 fixture segments repeated 5 times
+    // (60 segments), each followed by a 1 MB 'free' box, ~61 MB in total
+    if (url === '/big-hls/index.m3u8') {
+      const src = fs.readFileSync(path.join(__dirname, 'fixtures', 'hls', 'index.m3u8'), 'utf8').split('\n');
+      const head = src.filter(l => l.startsWith('#EXT') && !l.startsWith('#EXTINF') && !l.startsWith('#EXT-X-ENDLIST'))
+        .map(l => l.replace('URI="init.mp4"', `URI="${ORIGIN}/hls-real/init.mp4"`));
+      const pairs = [];
+      for (let i = 0; i < src.length; i++) if (src[i].startsWith('#EXTINF')) pairs.push([src[i], src[i + 1]]);
+      const body = [];
+      for (let r = 0; r < 5; r++) for (const [inf, seg] of pairs) body.push(inf, `pad/${seg}?r=${r}`);
+      return m3u8([...head, ...body, '#EXT-X-ENDLIST', ''].join('\n'));
+    }
+    const padMatch = /^\/big-hls\/pad\/(seg\d+\.m4s)$/.exec(url);
+    if (padMatch) {
+      const seg = fs.readFileSync(path.join(__dirname, 'fixtures', 'hls', padMatch[1]));
+      const free = Buffer.alloc(1024 * 1024);
+      free.writeUInt32BE(free.length, 0);
+      free.write('free', 4, 'latin1');
+      return send(200, 'video/mp4', Buffer.concat([seg, free]));
+    }
+
+    if (url === '/p/real-hls') {
+      return html('Watch Test Clip Episode 2 Online Free - Localhost', `<script>fetch('/hls-real/index.m3u8')</script>`);
+    }
+
+    // A phone-style page (viewport meta), for the mobile layout audit
+    if (url === '/p/mobile') {
+      return send(200, 'text/html', `<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Mobile</title></head>
+        <body style="margin:0;font-family:sans-serif"><h1 style="font-size:20px;padding:12px">Episode page</h1>
+        <video src="${ORIGIN}/media/clip_720p.mp4" style="width:100%"></video><script>fetch('/master/master.m3u8')</script></body></html>`);
+    }
+
+    // Phase 4 fixtures
+    // an embed: the stream is only in the iframe's DOM (no request), on another host
+    if (url === '/p/iframe') return html('Iframe', `<iframe src="${ALT_ORIGIN}/p/inner" width="400" height="300"></iframe>`);
+    if (url === '/p/inner') return html('Inner', `<div data-source="${ALT_ORIGIN}/hls/frame.m3u8"></div>`);
+    // a playlist fetched by the page's service worker (webRequest tabId -1)
+    if (url === '/p/sw') {
+      return html('Worker', `<script>
+        navigator.serviceWorker.register('/sw.js').then(() => navigator.serviceWorker.ready)
+          .then(reg => setTimeout(() => reg.active.postMessage('go'), 300));</script>`);
+    }
+    if (url === '/sw.js') {
+      return send(200, 'application/javascript', `
+        self.addEventListener('install', () => self.skipWaiting());
+        self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+        self.addEventListener('message', e => { if (e.data === 'go') fetch('/hls/sw.m3u8'); });`);
+    }
+    if (url === '/hls/sw.m3u8' || url === '/hls/frame.m3u8') return m3u8('#EXTM3U\n#EXTINF:10.0,\nseg1.ts\n#EXT-X-ENDLIST\n');
+    // a playlist that needs the page's cookie
+    if (url === '/p/cookie') return html('Cookie', `<script>document.cookie = 'sap=yes; path=/'; fetch('/cookie/index.m3u8')</script>`);
+    if (url === '/cookie/index.m3u8') {
+      log.cookies.push(req.headers.cookie || null);
+      if (!/(^|;\s*)sap=yes/.test(req.headers.cookie || '')) return send(403, 'text/plain', 'cookie required');
+      return m3u8('#EXTM3U\n#EXTINF:5.0,\ns0.ts\n#EXT-X-ENDLIST\n');
+    }
+    if (url === '/proxy.php') return m3u8('#EXTM3U\n#EXTINF:10.0,\nseg1.ts\n#EXT-X-ENDLIST\n');
+    if (url === '/api/play/42') return send(200, 'text/plain', '#EXTM3U\n#EXTINF:10.0,\nseg1.ts\n#EXT-X-ENDLIST\n');
+    if (url === '/get') return send(200, 'application/octet-stream', 'x');
 
     // ── media ────────────────────────────────────────────────
+    // A real, playable 3 s WebM (tests/e2e/fixtures/clip.webm, made by make-fixture.js)
+    if (url === '/media/real.webm') {
+      const file = path.join(__dirname, 'fixtures', 'clip.webm');
+      if (!fs.existsSync(file)) return send(404, 'text/plain', 'run npm run make-fixture');
+      const data = fs.readFileSync(file);
+      // Byte ranges, so the browser can seek (resume tests)
+      const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+      if (range) {
+        const start = range[1] ? +range[1] : 0;
+        const end = range[2] ? Math.min(+range[2], data.length - 1) : data.length - 1;
+        return send(206, 'video/webm', data.subarray(start, end + 1), {
+          'accept-ranges': 'bytes', 'content-range': `bytes ${start}-${end}/${data.length}`
+        });
+      }
+      return send(200, 'video/webm', data, { 'accept-ranges': 'bytes' });
+    }
     if (url.startsWith('/media/')) return send(200, 'video/mp4', 'x');
     if (url === '/live/chunk0001.ts') return send(200, 'video/mp2t', 'x');
     if (url.startsWith('/seg/index') && url.endsWith('.ts')) return send(200, 'video/mp2t', 'x');
@@ -85,6 +192,25 @@ function startServer() {
     // ── subtitles ────────────────────────────────────────────
     if (url === '/subs/en.vtt') return send(200, 'text/vtt', 'WEBVTT\n\n00:00.000 --> 00:02.000\nHello\n');
     if (url === '/subs/fr.srt') return send(200, 'application/x-subrip', '1\n00:00:00,000 --> 00:00:02,000\nBonjour\n');
+    // Windows-1252 bytes ("Café “quoted”"), no charset: must not turn into U+FFFD
+    if (url === '/subs/cp1252.srt') {
+      const text = Buffer.concat([
+        Buffer.from('1\r\n00:00:00,000 --> 00:00:03,000\r\nCaf'), Buffer.from([0xe9, 0x20, 0x93]),
+        Buffer.from('quoted'), Buffer.from([0x94, 0x0d, 0x0a])
+      ]);
+      return send(200, 'application/octet-stream', text);
+    }
+    if (url === '/subs/styled.ass') {
+      return send(200, 'text/plain', [
+        '[Script Info]', 'ScriptType: v4.00+', '', '[Events]',
+        'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+        'Dialogue: 0,0:00:00.00,0:00:03.00,Default,,0,0,0,,{\\i1}Styled{\\i0} line, with comma'
+      ].join('\n'));
+    }
+    if (url === '/subs/caps.ttml') {
+      return send(200, 'application/ttml+xml', '<?xml version="1.0"?><tt xmlns="http://www.w3.org/ns/ttml"><body><div>' +
+        '<p begin="00:00:00.000" end="00:00:03.000">TTML caption</p></div></body></tt>');
+    }
 
     send(404, 'text/plain', 'not found');
   });
