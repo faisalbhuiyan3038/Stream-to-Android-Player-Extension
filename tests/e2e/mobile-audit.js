@@ -29,6 +29,12 @@ const measure = (min) => {
       const cs = getComputedStyle(el);
       if (r.width === 0 || r.height === 0 || cs.visibility === 'hidden' || cs.display === 'none' || +cs.opacity === 0) continue;
       if (r.right < 0 || r.bottom < 0 || r.left > innerWidth || r.top > innerHeight) continue;
+      // A checkbox/radio inside a <label>: the whole label is the tap target
+      const label = el.matches('input[type=checkbox], input[type=radio]') && el.closest('label');
+      if (label) {
+        const lr = label.getBoundingClientRect();
+        if (lr.width >= min && lr.height >= min) continue;
+      }
       // Sliders: the thumb is the target; native range inputs only need a visible track, custom
       // sliders need a tall enough hit area
       const isNativeRange = el.matches('input[type=range]');

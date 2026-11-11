@@ -252,6 +252,19 @@ test('captures the page Referer / User-Agent on the stream', async () => {
   await page.close();
 });
 
+test('duration of a playlist that needs the page Referer (analysis request carries it)', async () => {
+  site.log.secureReferers.length = 0;
+  const page = await openSite('/p/secure');
+  const items = await until(async () => { const r = await readItems(page); return r.length === 1 && r[0].duration ? r : null; });
+  assert.ok(items, `no duration: ${JSON.stringify(await readItems(page))} referers ${JSON.stringify(site.log.secureReferers)}`);
+  assert.equal(items[0].duration, '0:05');
+  // the page's request and the background's, both with the page as Referer; the rule is gone after
+  assert.ok(site.log.secureReferers.length >= 2 && site.log.secureReferers.every(r => r === `${ORIGIN}/p/secure`), JSON.stringify(site.log.secureReferers));
+  const left = await sw.evaluate(async () => (await chrome.declarativeNetRequest.getSessionRules()).filter(r => r.id >= 1900000000).length);
+  assert.equal(left, 0);
+  await page.close();
+});
+
 test('built-in web player sends the page Referer to the CDN (declarativeNetRequest rule)', async () => {
   await setSettings({ webPlayerEngine: 'shaka' });
   site.log.secureReferers.length = 0;
@@ -596,9 +609,9 @@ const boxTypes = buf => {
 };
 
 // Opens download.html for `mediaUrl`, presses Download, returns { state, file (Buffer), name }
-async function downloadVia(mediaUrl, title = 'Test Clip') {
+async function downloadVia(mediaUrl, title = 'Test Clip', extra = '') {
   const page = await ctx.newPage();
-  await page.goto(`chrome-extension://${extId}/download.html?url=${encodeURIComponent(mediaUrl)}&title=${encodeURIComponent(title)}`);
+  await page.goto(`chrome-extension://${extId}/download.html?url=${encodeURIComponent(mediaUrl)}&title=${encodeURIComponent(title)}${extra}`);
   const ready = await until(() => page.evaluate(() => window._download && ['ready', 'error'].includes(window._download.state) && window._download), { timeout: 20000 });
   assert.equal(ready && ready.state, 'ready', `not ready: ${JSON.stringify(ready)}`);
   const [download] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.click('#start')]);
@@ -655,6 +668,79 @@ test('download: separate audio rendition is merged into the same MP4 (and plays)
   assert.ok(Math.abs(media.duration - 24) < 1.5, `duration ${media.duration}`);
   assert.ok(media.audioBytes > 0, 'audio was not decoded');
   assert.ok(media.videoBytes > 0, 'video was not decoded');
+});
+
+// Text samples of the tx3g tracks of an MP4: { trackId: [texts in file order] }
+function tx3gTexts(buf) {
+  const boxes = (start, end) => {
+    const out = [];
+    for (let p = start; p + 8 <= end;) {
+      const size = buf.readUInt32BE(p);
+      if (size < 8) break;
+      out.push({ type: buf.toString('latin1', p + 4, p + 8), start: p, end: p + size, body: p + 8 });
+      p += size;
+    }
+    return out;
+  };
+  const top = boxes(0, buf.length);
+  const moov = top.find(b => b.type === 'moov');
+  const textIds = boxes(moov.body, moov.end).filter(b => b.type === 'trak').filter(t => {
+    const mdia = boxes(t.body, t.end).find(b => b.type === 'mdia');
+    const hdlr = boxes(mdia.body, mdia.end).find(b => b.type === 'hdlr');
+    return buf.toString('latin1', hdlr.body + 8, hdlr.body + 12) === 'sbtl';
+  }).map(t => buf.readUInt32BE(boxes(t.body, t.end).find(b => b.type === 'tkhd').body + 12));
+  const texts = Object.fromEntries(textIds.map(id => [id, []]));
+  for (let i = 0; i < top.length; i++) {
+    if (top[i].type !== 'moof') continue;
+    const traf = boxes(top[i].body, top[i].end).find(b => b.type === 'traf');
+    const tfhd = boxes(traf.body, traf.end).find(b => b.type === 'tfhd');
+    const id = buf.readUInt32BE(tfhd.body + 4);
+    if (!texts[id]) continue;
+    const trun = boxes(traf.body, traf.end).find(b => b.type === 'trun');
+    const count = buf.readUInt32BE(trun.body + 4);
+    let p = top[i].start + buf.readInt32BE(trun.body + 8);
+    for (let k = 0; k < count; k++) {
+      const size = buf.readUInt32BE(trun.body + 12 + k * 8 + 4);
+      const len = buf.readUInt16BE(p);
+      if (len) texts[id].push(buf.toString('utf8', p + 2, p + 2 + len));
+      p += size;
+    }
+  }
+  return texts;
+}
+
+test('download: subtitles go into the MP4 as text tracks (page files + manifest track) and as .srt', async () => {
+  const subs = JSON.stringify([{ url: `${ORIGIN}/subs/fr.srt`, label: 'French', lang: 'fr' }, { url: `${ORIGIN}/subs/cp1252.srt`, label: 'Old SRT', lang: '' }]);
+  const page = await ctx.newPage();
+  await page.goto(`chrome-extension://${extId}/download.html?url=${encodeURIComponent(`${ORIGIN}/hls-subs/master.m3u8`)}&title=Subbed&subs=${encodeURIComponent(subs)}`);
+  const ready = await until(() => page.evaluate(() => window._download && ['ready', 'error'].includes(window._download.state) && window._download), { timeout: 20000 });
+  assert.equal(ready.state, 'ready', JSON.stringify(ready));
+  assert.deepEqual(ready.subtitleChoices.map(c => [c.source, c.label, c.language]),
+    [['manifest', 'Deutsch', 'de'], ['file', 'French', 'fr'], ['file', 'Old SRT', 'und']]);
+  assert.equal(await page.isVisible('#subs-field'), true);
+  await page.check('#subs-files');
+  const downloads = [];
+  page.on('download', d => downloads.push(d));
+  await page.click('#start');
+  const done = await until(() => page.evaluate(() => ['done', 'error'].includes(window._download.state) && window._download), { timeout: 30000 });
+  assert.equal(done.state, 'done', JSON.stringify(done));
+  await until(() => downloads.length >= 4, { timeout: 10000 });
+  const names = downloads.map(d => d.suggestedFilename());
+  assert.deepEqual(names, ['Subbed.mp4', 'Subbed.de.srt', 'Subbed.fr.srt', 'Subbed.Old_SRT.srt']);
+  const read = async d => { const f = path.join(os.tmpdir(), `sap-dl-${Date.now()}-${d.suggestedFilename()}`); await d.saveAs(f); const b = fs.readFileSync(f); fs.rmSync(f, { force: true }); return b; };
+  const mp4 = await read(downloads[0]);
+  assert.deepEqual(done.tracks.map(t => t.handler), ['vide', 'sbtl', 'sbtl', 'sbtl']);
+  assert.deepEqual(done.subtitles.map(t => [t.label, t.cues, t.base]), [['Deutsch', 3, 'media'], ['French', 1, 'output'], ['Old SRT', 1, 'output']]);
+  const texts = Object.values(tx3gTexts(mp4)).map(list => [...new Set(list)]);
+  assert.deepEqual(texts, [['Guten Tag', 'Über die Grenze', 'Auf Wiedersehen'], ['Bonjour'], ['Café “quoted”']]);
+  const srt = (await read(downloads[1])).toString('utf8');
+  assert.match(srt, /00:00:01,000 --> 00:00:03,000\r?\nGuten Tag/);
+  assert.match(srt, /00:00:11,000 --> 00:00:13,000\r?\n\u00dcber die Grenze\r?\n\r?\n3\r?\n/);
+  // the video still plays
+  const media = await probeMedia(mp4, 'video/mp4');
+  assert.ok(Math.abs(media.duration - 24) < 1.5, `duration ${media.duration}`);
+  assert.ok(media.videoBytes > 0, 'no video decoded');
+  await page.close();
 });
 
 test('download: AES-128 encrypted HLS is decrypted', async () => {

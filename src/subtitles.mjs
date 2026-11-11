@@ -334,6 +334,54 @@ export function toWebVtt(text, { url = '', contentType = '' } = {}) {
   }
 }
 
+// ─── cues (for the downloader: embedded MP4 text tracks, .srt files) ─────────
+
+function parseVttTime(s) {
+  const m = /^(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{1,3})$/.exec(s.trim());
+  if (!m) return NaN;
+  return (parseInt(m[1] || '0', 10) * 3600) + parseInt(m[2], 10) * 60 + parseInt(m[3], 10) + parseInt(m[4].padEnd(3, '0'), 10) / 1000;
+}
+
+// WebVTT → [{ start, end, text }] in seconds, text without markup (tags dropped, entities decoded).
+export function parseVttCues(vtt) {
+  const cues = [];
+  const blocks = stripBom(String(vtt)).replace(/\r\n?/g, '\n').split(/\n{2,}/);
+  for (const block of blocks) {
+    const lines = block.split('\n');
+    const at = lines.findIndex(l => l.includes('-->'));
+    if (at === -1) continue;
+    const [a, rest] = lines[at].split('-->');
+    const start = parseVttTime(a);
+    const end = parseVttTime((rest || '').trim().split(/\s+/)[0] || '');
+    if (!(end > start)) continue;
+    const text = lines.slice(at + 1).join('\n')
+      .replace(/<[^>]*>/g, '')
+      .split('\n').map(l => decodeEntities(l).trim()).filter(Boolean).join('\n');
+    if (text) cues.push({ start, end, text });
+  }
+  return cues;
+}
+
+// HLS WebVTT segments: X-TIMESTAMP-MAP=MPEGTS:<90 kHz>,LOCAL:<time> maps cue times onto the media
+// timeline. Returns the offset in seconds to add to cue times (media time), or null when absent.
+export function vttTimestampOffset(vtt) {
+  const m = /X-TIMESTAMP-MAP=([^\n]*)/i.exec(String(vtt).slice(0, 2000));
+  if (!m) return null;
+  const mpegts = /MPEGTS:(\d+)/i.exec(m[1]);
+  const local = /LOCAL:([\d:.]+)/i.exec(m[1]);
+  const localSec = local ? parseVttTime(local[1]) : 0;
+  return (mpegts ? parseInt(mpegts[1], 10) / 90000 : 0) - (Number.isFinite(localSec) ? localSec : 0);
+}
+
+export function cuesToSrt(cues) {
+  const t = sec => vttTime(sec).replace('.', ',');
+  return cues
+    .filter(c => c.end > c.start && c.text)
+    .sort((a, b) => a.start - b.start)
+    .map((c, i) => `${i + 1}\n${t(c.start)} --> ${t(c.end)}\n${c.text}\n`)
+    .join('\n');
+}
+
 // Subtitle files are often not UTF-8 (old SRTs are Windows-1252). Honour a BOM, try strict
 // UTF-8, and fall back to Windows-1252, which never fails.
 export function decodeSubtitleBytes(buffer) {

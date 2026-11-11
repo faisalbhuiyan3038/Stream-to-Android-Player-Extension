@@ -1,8 +1,9 @@
 // Download page: pick quality/audio, download the stream in this tab, save one MP4.
 // Opened by the background like the web player (so the page's Referer/Cookie rule applies).
 import shaka from 'shaka-player/dist/shaka-player.compiled.js';
-import { getVideoUrl, getTitle } from './page-params.mjs';
-import { describeManifest, downloadManifest, downloadFile, safeFileName } from './downloader.mjs';
+import { getVideoUrl, getTitle, getSubtitleList } from './page-params.mjs';
+import { describeManifest, downloadManifest, downloadFile, safeFileName, textStreamsOf, loadTextStream, segmentUrisOf } from './downloader.mjs';
+import { loadSubtitleAsVtt, parseVttCues, cuesToSrt } from './subtitles.mjs';
 import { bufferingSettings } from './prefetch.mjs';
 import { openStore, removeLeftoverStores } from './segment-store.mjs';
 
@@ -13,7 +14,7 @@ const mobile = /Android|Mobile/i.test(navigator.userAgent) || matchMedia('(point
 const PHONE_WARN_BYTES = 500 * 1024 * 1024;
 
 // Read by the browser tests
-const state = window._download = { state: 'starting', error: null, size: 0, duration: 0, tracks: [], name: '' };
+const state = window._download = { state: 'starting', error: null, size: 0, duration: 0, tracks: [], name: '', subtitles: [], subtitleErrors: [] };
 
 function setStatus(text, kind = '') {
   $('status').textContent = text;
@@ -66,6 +67,91 @@ function save(result, name) {
   return href;
 }
 
+// ─── subtitles ───────────────────────────────────────────────────────────────
+// Two sources: subtitle files the extension found on the page (?subs=, the same list the players
+// get) and subtitle tracks listed in the HLS/DASH manifest. Both go into the MP4 as text tracks;
+// a plain video file is saved as it is, so its subtitles can only be .srt files.
+let subtitleChoices = [];
+
+function showSubtitleChoices(list, { embed }) {
+  subtitleChoices = list;
+  state.subtitleChoices = list.map(c => ({ label: c.label, language: c.language, source: c.source }));
+  if (!list.length) return;
+  $('subs-list').replaceChildren(...list.map((c, i) => {
+    const row = document.createElement('label');
+    row.className = 'check';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = true;
+    input.dataset.index = String(i);
+    const text = document.createElement('span');
+    text.textContent = [c.label, c.language && c.language !== 'und' && c.language !== c.label ? c.language : ''].filter(Boolean).join(' · ');
+    row.append(input, text);
+    return row;
+  }));
+  $('subs-files-row').hidden = !embed;
+  $('subs-note').textContent = embed
+    ? 'Added to the MP4 as subtitle tracks (VLC, MX Player, mpv and most video players show them; browsers do not).'
+    : 'This video is saved as it is, so the subtitles are saved next to it as .srt files.';
+  $('subs-field').hidden = false;
+}
+
+const chosenSubtitles = () => [...$('subs-list').querySelectorAll('input:checked')].map(i => subtitleChoices[Number(i.dataset.index)]);
+
+function lockSubtitleChoices() {
+  for (const input of $('subs-field').querySelectorAll('input')) input.disabled = true;
+}
+
+// Loads the chosen subtitles as cues. A subtitle that fails is skipped (and named), not fatal.
+async function loadChosenSubtitles({ signal, parallel }) {
+  const out = [];
+  for (const c of chosenSubtitles()) {
+    try {
+      let cues;
+      let base = 'output';
+      if (c.source === 'manifest') {
+        ({ cues, base } = await loadTextStream(c.stream, { signal, parallel }));
+      } else {
+        cues = parseVttCues((await loadSubtitleAsVtt(c.sub)).vtt);
+      }
+      if (!cues.length) throw new Error('no cues');
+      out.push({ cues, base, language: c.language, label: c.label });
+    } catch (e) {
+      if (signal && signal.aborted) throw new Error('Cancelled');
+      state.subtitleErrors.push(`${c.label}: ${e.message || e}`);
+    }
+  }
+  state.subtitles = out.map(t => ({ label: t.label, language: t.language, cues: t.cues.length, base: t.base }));
+  return out;
+}
+
+// "Show S01E02.mp4" + English → "Show S01E02.en.srt" (the label when there is no language)
+// zero: the media time that became 0 in the MP4 (for cues on the media timeline)
+function saveSrtFiles(tracks, videoName, zero = 0) {
+  const stem = videoName.replace(/\.[^.]+$/, '') || 'video';
+  const used = new Set();
+  for (const t of tracks) {
+    const base = (t.language && t.language !== 'und' ? t.language : t.label || 'subtitles').replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 40);
+    let tag = base;
+    for (let n = 2; used.has(tag); n++) tag = `${base}_${n}`;
+    used.add(tag);
+    const shift = t.base === 'media' ? zero : 0;
+    const cues = shift ? t.cues.map(c => ({ start: c.start - shift, end: c.end - shift, text: c.text })).filter(c => c.end > 0) : t.cues;
+    const blob = new Blob(['\ufeff' + cuesToSrt(cues)], { type: 'application/x-subrip' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${stem}.${tag}.srt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  state.srtFiles = tracks.length;
+}
+
+function pageSubtitles() {
+  return getSubtitleList(window.location).map(s => ({ source: 'file', label: s.label || 'Subtitles', language: s.lang || 'und', sub: s }));
+}
+
 const isManifest = u => /\.(m3u8|m3u|mpd)(?:[?#]|$)/i.test(u.split('#')[0]) || /\/manifest(\(|\b)/i.test(u);
 
 let storageKind = 'indexeddb';
@@ -83,6 +169,7 @@ async function main() {
     // A plain file: no choices, just download it
     const ext = (url.split(/[?#]/)[0].match(/\.(mp4|m4v|webm|mkv|mov|ts|mp3|m4a)$/i) || [, 'mp4'])[1].toLowerCase();
     $('name').value = safeFileName(title || decodeURIComponent(url.split(/[?#]/)[0].split('/').pop().replace(/\.[^.]+$/, '')), ext);
+    showSubtitleChoices(pageSubtitles(), { embed: false });
     setStatus('Ready.');
     state.state = 'ready';
     $('start').disabled = false;
@@ -92,7 +179,9 @@ async function main() {
       $('cancel').hidden = false;
       $('progress').hidden = false;
       state.state = 'downloading';
+      lockSubtitleChoices();
       try {
+        const subs = await loadChosenSubtitles({ signal: controller.signal, parallel });
         const result = await downloadFile(url, {
           store: await getStore(),
           signal: controller.signal,
@@ -102,7 +191,7 @@ async function main() {
             setStatus(`${mb(p.bytes)} downloaded`);
           }
         });
-        finish(result, $('name').value, result.type);
+        finish(result, $('name').value, result.type, subs, true);
       } catch (e) {
         fail(e);
       }
@@ -157,6 +246,18 @@ async function main() {
   $('audio-field').hidden = info.audios.length === 0;
   $('choices').hidden = false;
 
+  // Subtitles: the manifest's own text tracks, then the files found on the page (minus the
+  // segments of those manifest tracks, which the page may have fetched one by one)
+  const fromManifest = textStreamsOf(manifest);
+  const manifestUris = new Set();
+  for (const t of fromManifest) {
+    try { for (const u of await segmentUrisOf(t.stream)) manifestUris.add(u); } catch { /* listed anyway */ }
+  }
+  showSubtitleChoices([
+    ...fromManifest.map(t => ({ source: 'manifest', label: t.label, language: t.language, stream: t.stream })),
+    ...pageSubtitles().filter(c => !manifestUris.has(c.sub.url))
+  ], { embed: true });
+
   const estimate = () => {
     const v = info.videos.find(x => String(x.id) === quality.value);
     const a = info.audios.find(x => String(x.id) === audioSel.value);
@@ -185,11 +286,18 @@ async function main() {
     $('start').disabled = true;
     quality.disabled = true;
     audioSel.disabled = true;
+    lockSubtitleChoices();
     $('cancel').hidden = false;
     $('progress').hidden = false;
     state.state = 'downloading';
     try {
+      let text = [];
+      if (chosenSubtitles().length) {
+        setStatus('Loading subtitles…');
+        text = await loadChosenSubtitles({ signal: controller.signal, parallel });
+      }
       const result = await downloadManifest({
+        text,
         store: await getStore(),
         shaka, manifest, parallel, signal: controller.signal,
         choice: {
@@ -205,7 +313,7 @@ async function main() {
       });
       player.destroy().catch(() => {});
       setStatus('Putting the MP4 together…');
-      finish(result, $('name').value, 'video/mp4');
+      finish(result, $('name').value, 'video/mp4', text, $('subs-files').checked);
     } catch (e) {
       fail(e.message === 'Cancelled' || (controller && controller.signal.aborted) ? new Error('Cancelled.') : e);
       if (controller && controller.signal.aborted) state.state = 'cancelled';
@@ -214,13 +322,20 @@ async function main() {
   $('cancel').onclick = () => controller && controller.abort();
 }
 
-function finish(result, name, type) {
+function finish(result, name, type, subtitles = [], srtFiles = false) {
   const fileName = name && name.trim() ? name.trim() : 'video.mp4';
   save(result, fileName, type);
+  if (srtFiles && subtitles.length) saveSrtFiles(subtitles, fileName, result.zero || 0);
   Object.assign(state, { state: 'done', size: result.size, duration: result.duration || 0, tracks: result.tracks || [], name: fileName, peakHeld: result.peakHeld, storage: result.storage });
   $('cancel').hidden = true;
   $('progress').value = $('progress').max;
-  setStatus(`Saved ${fileName} (${mb(result.size)}${result.duration ? `, ${clock(result.duration)}` : ''}).`, 'done');
+  const embedded = (result.tracks || []).filter(t => t.handler === 'sbtl').length;
+  const subNote = [
+    embedded ? `${embedded} subtitle track${embedded > 1 ? 's' : ''} inside` : '',
+    srtFiles && subtitles.length ? `${subtitles.length} .srt file${subtitles.length > 1 ? 's' : ''}` : '',
+    state.subtitleErrors.length ? `skipped ${state.subtitleErrors.join('; ')}` : ''
+  ].filter(Boolean).join(' · ');
+  setStatus(`Saved ${fileName} (${mb(result.size)}${result.duration ? `, ${clock(result.duration)}` : ''}).${subNote ? ` Subtitles: ${subNote}.` : ''}`, 'done');
   $('again').hidden = false;
   $('again').onclick = () => save(result, fileName, type);
 }

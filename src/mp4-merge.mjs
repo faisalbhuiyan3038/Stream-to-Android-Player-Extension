@@ -10,6 +10,8 @@
 // Plays the role of FastStream's hls2mp4/mp4merger (which write a progressive moov file); the
 // fragmented layout + sidx needs far less code and keeps memory use flat when streaming to disk.
 
+import { flattenCues, textTrak, textTrex, samplesBetween, textFragment } from './mp4-text.mjs';
+
 // ─── reading ─────────────────────────────────────────────────────────────────
 
 const u32 = (b, o) => ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
@@ -190,7 +192,11 @@ export function splitSegment(b) {
 // (`rest` is opaque: a Uint8Array or a Blob slice; it is only passed through).
 // Returns { header: [ftyp, moov, sidx], body: [{ moof, rest }] in file order, size, duration, tracks }.
 // The moofs are rewritten in place: track IDs, decode times, sequence numbers, absolute offsets.
-export function planMp4(sources) {
+// text: subtitle tracks to add, [{ cues: [{start, end, text}] (seconds), language, label, base }].
+// base 'output' (default): cue times count from the start of the file (sidecar subtitle files);
+// 'media': times on the sources' media timeline (HLS WebVTT with X-TIMESTAMP-MAP), shifted like
+// the media.
+export function planMp4(sources, { text = [] } = {}) {
   if (!sources.some(s => s && s.init)) throw new Error('nothing to write');
   const usable = sources.filter(s => s && s.init && s.fragments && s.fragments.length);
   if (!usable.length) throw new Error('no media fragments found');
@@ -278,9 +284,38 @@ export function planMp4(sources) {
 
   // 5. Time order (stable: first source before later ones on ties), sequence numbers
   frags.sort((a, b) => a.time - b.time || a.srcIndex - b.srcIndex);
-  frags.forEach((f, i) => { if (f.seqAt >= 0) setU32(f.moof, f.seqAt, i + 1); });
 
   const duration = Math.max(...outTracks.map(t => (t.lastEnd || 0) / t.timescale));
+  const primary = outTracks.find(t => t.handler === 'vide') || outTracks[0];
+
+  // 5b. Subtitle tracks: one text fragment right after each fragment of the primary track,
+  //     covering the time up to the next one (so a seek through the sidx finds them)
+  const textTracks = text.filter(t => t && t.cues && t.cues.length);
+  if (textTracks.length) {
+    const bounds = [0]; // ms
+    const boundTimes = [0]; // the primary fragment's exact time, so the text sorts right after it
+    for (const f of frags) {
+      if (!f.trafs.some(t => t.out === primary)) continue;
+      const ms = Math.round(f.time * 1000);
+      if (ms > bounds[bounds.length - 1]) { bounds.push(ms); boundTimes.push(f.time); }
+    }
+    const endMs = Math.round(duration * 1000);
+    if (endMs > bounds[bounds.length - 1]) bounds.push(endMs);
+    const pieces = [];
+    textTracks.forEach((t, k) => {
+      const id = nextId++;
+      const shift = t.base === 'media' ? zero : 0;
+      const flat = flattenCues(t.cues.map(c => ({ start: c.start - shift, end: c.end - shift, text: c.text })));
+      outTracks.push({ id, timescale: 1000, handler: 'sbtl', trakBytes: textTrak(id, { language: t.language, label: t.label, enabled: k === 0 }), trexBytes: textTrex(id), lastEnd: endMs, text: true });
+      for (let i = 0; i + 1 < bounds.length; i++) {
+        const frag = textFragment(id, bounds[i], samplesBetween(flat, bounds[i], bounds[i + 1]));
+        pieces.push({ moof: frag.moof, rest: frag.mdat, size: frag.moof.length + frag.mdat.length, seqAt: frag.seqAt, trafs: [], time: boundTimes[i], srcIndex: 1e9 + k });
+      }
+    });
+    frags.push(...pieces);
+    frags.sort((a, b) => a.time - b.time || a.srcIndex - b.srcIndex);
+  }
+  frags.forEach((f, i) => { if (f.seqAt >= 0) setU32(f.moof, f.seqAt, i + 1); });
 
   // 6. moov: mvhd (next_track_ID), every trak, mvex (mehd with the total duration, every trex)
   const mvhdVersion = mvhd[8];
@@ -297,7 +332,6 @@ export function planMp4(sources) {
   if (!ftyp) ftyp = box('ftyp', new TextEncoder().encode('isom'), new Uint8Array([0, 0, 2, 0]), new TextEncoder().encode('isomiso6mp41'));
 
   // 7. sidx on the primary track (video if any): one reference per primary fragment
-  const primary = outTracks.find(t => t.handler === 'vide') || outTracks[0];
   const starts = [];
   frags.forEach((f, i) => { if (f.trafs.some(t => t.out === primary)) starts.push(i); });
   if (!starts.length || starts[0] !== 0) starts.unshift(0);
@@ -341,20 +375,21 @@ export function planMp4(sources) {
     body: frags.map(f => ({ moof: f.moof, rest: f.rest })),
     size: pos,
     duration,
+    zero, // media time (s) that became 0 in the file
     tracks: outTracks.map(t => ({ id: t.id, handler: t.handler, timescale: t.timescale }))
   };
 }
 
 // In-memory convenience: sources [{ init, segments: Uint8Array[] }] → { parts, size, duration, tracks }.
 // `inPlace`: the media data of the result points into the segment buffers (no copy).
-export function buildMp4(sources, { inPlace = false } = {}) {
+export function buildMp4(sources, { inPlace = false, text = [] } = {}) {
   const plan = planMp4(sources.filter(Boolean).map(s => ({
     init: s.init,
     fragments: (s.segments || []).flatMap(seg => splitSegment(seg).map(f => {
       const rest = inPlace ? seg.subarray(f.restStart, f.restEnd) : seg.slice(f.restStart, f.restEnd);
       return { moof: f.moof, rest, restSize: rest.length, moofOffset: f.moofOffset };
     }))
-  })));
+  })), { text });
   const parts = [...plan.header, ...plan.body.flatMap(f => [f.moof, f.rest])];
   return { parts, size: plan.size, duration: plan.duration, tracks: plan.tracks };
 }

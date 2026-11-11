@@ -91,12 +91,15 @@ test('popup on a phone: no horizontal overflow, thumb-sized controls (portrait a
 
 test('download page on a phone: fits, thumb-sized controls, quality choice shown (portrait and landscape)', async () => {
   for (const view of Object.values(VIEWS)) {
-    const page = await openAt(`chrome-extension://${extId}/download.html?url=${encodeURIComponent(`${ORIGIN}/hls-real/master.m3u8`)}&title=Clip`, view);
+    // with page subtitles, so the subtitle choices are measured too
+    const subs = encodeURIComponent(JSON.stringify([{ url: `${ORIGIN}/subs/fr.srt`, label: 'French', lang: 'fr' }]));
+    const page = await openAt(`chrome-extension://${extId}/download.html?url=${encodeURIComponent(`${ORIGIN}/hls-real/master.m3u8`)}&title=Clip&subs=${subs}`, view);
     assert.ok(await until(() => page.evaluate(() => window._download && window._download.state === 'ready'), { timeout: 15000 }), 'not ready');
     const r = await page.evaluate(measure, MIN);
     assert.equal(r.overflowX, false, `overflow at ${view.width}x${view.height}`);
     assert.deepEqual(r.small, [], `small controls at ${view.width}x${view.height}`);
     assert.equal(await page.isVisible('#quality'), true);
+    assert.equal(await page.isVisible('#subs-files'), true);
     await page.close();
   }
 });

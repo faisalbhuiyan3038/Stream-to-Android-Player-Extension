@@ -6,6 +6,7 @@
 
 import { planMp4, splitSegment } from './mp4-merge.mjs';
 import { MemoryStore } from './segment-store.mjs';
+import { decodeSubtitleBytes, toWebVtt, parseVttCues, vttTimestampOffset } from './subtitles.mjs';
 
 const AUDIO_CODEC = /mp4a|ac-3|ec-3|mp3|opus|flac/i;
 
@@ -93,6 +94,49 @@ export function describeManifest(manifest) {
   audios.sort((a, b) => b.bandwidth - a.bandwidth);
   const drm = variants.some(v => (v.video && v.video.drmInfos && v.video.drmInfos.length) || (v.audio && v.audio.drmInfos && v.audio.drmInfos.length));
   return { videos, audios, drm, duration: manifest.presentationTimeline ? manifest.presentationTimeline.getDuration() : 0, live: manifest.presentationTimeline ? manifest.presentationTimeline.isLive() : false };
+}
+
+// Subtitle tracks listed in the manifest (HLS EXT-X-MEDIA TYPE=SUBTITLES, DASH text
+// AdaptationSets). Only text formats (WebVTT, TTML, SRT) can be read; subtitles inside fMP4
+// segments (wvtt/stpp) are skipped.
+export function textStreamsOf(manifest) {
+  return (manifest.textStreams || [])
+    // fMP4 subtitles and CEA-608/708 captions (carried inside the video) cannot be read here
+    .filter(t => !/mp4|cea-[67]/i.test(t.mimeType || '') && !/^(wvtt|stpp)/i.test(t.codecs || ''))
+    .map(t => ({ id: t.id, language: t.language || 'und', label: t.label || t.originalLanguage || t.language || 'Subtitles', stream: t }));
+}
+
+// Segment addresses of a stream (to recognise subtitle segments the page fetched one by one)
+export async function segmentUrisOf(stream) {
+  return (await referencesOf(stream)).map(r => uriOf(r));
+}
+
+// Downloads every segment of a manifest text stream and returns
+// { cues, base } for planMp4 (base 'media' when the segments carry an X-TIMESTAMP-MAP).
+export async function loadTextStream(stream, { signal, fetchFn, parallel = 4 } = {}) {
+  const refs = await referencesOf(stream);
+  const texts = await runPool(refs.map(ref => async () => {
+    const bytes = await fetchBytes(uriOf(ref), { ...byteRange(ref), signal, fetchFn, retries: 2 });
+    return decodeSubtitleBytes(bytes);
+  }), parallel);
+  const cues = [];
+  const seen = new Set();
+  let base = 'output';
+  for (const raw of texts) {
+    if (!raw || !raw.trim()) continue;
+    const { vtt } = toWebVtt(raw, { contentType: stream.mimeType || '' });
+    const offset = vttTimestampOffset(raw);
+    if (offset != null) base = 'media';
+    for (const c of parseVttCues(vtt)) {
+      const cue = offset != null ? { start: c.start + offset, end: c.end + offset, text: c.text } : c;
+      // a cue that spans two segments is repeated in both
+      const key = `${cue.start.toFixed(3)}|${cue.end.toFixed(3)}|${cue.text}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      cues.push(cue);
+    }
+  }
+  return { cues, base };
 }
 
 function findStream(manifest, kind, id) {
@@ -193,8 +237,9 @@ async function fragmentsOf(blob, held) {
 
 // shaka: the Shaka namespace (for transmuxers). manifest: player.getManifest().
 // choice: { videoId, audioId }. store: where segments wait (segment-store.mjs; IndexedDB in the
-// download page). Returns { blob, size, duration, tracks, peakHeld, storage }.
-export async function downloadManifest({ shaka, manifest, choice, parallel = 4, signal, onProgress = () => {}, fetchFn, store = new MemoryStore() }) {
+// download page). text: subtitle tracks for the file (see planMp4).
+// Returns { blob, size, duration, tracks, peakHeld, storage }.
+export async function downloadManifest({ shaka, manifest, choice, parallel = 4, signal, onProgress = () => {}, fetchFn, store = new MemoryStore(), text = [] }) {
   const video = choice.videoId != null ? findStream(manifest, 'video', choice.videoId) : null;
   const audio = choice.audioId != null ? findStream(manifest, 'audio', choice.audioId) : null;
   if (!video && !audio) throw new Error('Nothing selected to download');
@@ -300,10 +345,10 @@ export async function downloadManifest({ shaka, manifest, choice, parallel = 4, 
   }
 
   // 3. One MP4: the small rewritten headers + slices of the stored media data
-  const plan = planMp4(sources.filter(Boolean));
+  const plan = planMp4(sources.filter(Boolean), { text });
   const blob = new Blob([...plan.header, ...plan.body.flatMap(f => [f.moof, f.rest])], { type: 'video/mp4' });
   if (blob.size !== plan.size) throw new Error(`Assembled ${blob.size} bytes, expected ${plan.size}`);
-  return { blob, size: plan.size, duration: plan.duration, tracks: plan.tracks, peakHeld: held.peak, storage: store.kind || 'memory' };
+  return { blob, size: plan.size, duration: plan.duration, zero: plan.zero, tracks: plan.tracks, peakHeld: held.peak, storage: store.kind || 'memory' };
 }
 
 // A plain media file (mp4, webm, …): streamed into the store in chunks of up to 4 MB.

@@ -78,10 +78,40 @@ function startServer() {
       return send(200, type, fs.readFileSync(file));
     }
 
+    // The fixture stream with a subtitle track in the master playlist: two WebVTT segments with
+    // X-TIMESTAMP-MAP (the second one repeats a cue that spans the segment boundary)
+    if (url === '/hls-subs/master.m3u8') {
+      return m3u8(`#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="Deutsch",LANGUAGE="de",DEFAULT=YES,AUTOSELECT=YES,URI="subs.m3u8"
+#EXT-X-STREAM-INF:BANDWIDTH=250000,RESOLUTION=320x180,CODECS="avc1.42e01e",SUBTITLES="subs"
+/hls-real/index.m3u8
+`);
+    }
+    if (url === '/hls-subs/subs.m3u8') {
+      return m3u8(`#EXTM3U
+#EXT-X-TARGETDURATION:12
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:12,
+sub0.vtt
+#EXTINF:12,
+sub1.vtt
+#EXT-X-ENDLIST
+`);
+    }
+    const subSeg = /^\/hls-subs\/sub([01])\.vtt$/.exec(url);
+    if (subSeg) {
+      const head = 'WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:900000,LOCAL:00:00:10.000\n\n';
+      const border = '00:11.000 --> 00:13.000\n\u00dcber die Grenze\n';
+      return send(200, 'text/vtt', head + (subSeg[1] === '0'
+        ? '00:01.000 --> 00:03.000\nGuten <i>Tag</i>\n\n' + border
+        : border + '\n00:20.000 --> 00:22.000\nAuf Wiedersehen\n'));
+    }
+
     // A long stream for the downloader's memory test: the 12 fixture segments repeated 5 times
     // (60 segments), each followed by a 1 MB 'free' box, ~61 MB in total
     if (url === '/big-hls/index.m3u8') {
-      const src = fs.readFileSync(path.join(__dirname, 'fixtures', 'hls', 'index.m3u8'), 'utf8').split('\n');
+      const src = fs.readFileSync(path.join(__dirname, 'fixtures', 'hls', 'index.m3u8'), 'utf8').split(/\r?\n/);
       const head = src.filter(l => l.startsWith('#EXT') && !l.startsWith('#EXTINF') && !l.startsWith('#EXT-X-ENDLIST'))
         .map(l => l.replace('URI="init.mp4"', `URI="${ORIGIN}/hls-real/init.mp4"`));
       const pairs = [];

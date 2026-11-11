@@ -388,9 +388,43 @@ function isSegmentOf(segUrl, stream) {
 
 // ─── Playlist analysis (duration, real quality, variants) ─────────────────────
 
-async function fetchText(url) {
+// The background's own request for a playlist must look like the page's: many CDNs refuse a
+// request without the page's Referer/Origin (hotlink protection), and then no duration, quality
+// or variant list is shown. A session rule gives exactly this URL, requested from outside any tab
+// (tabId -1: our background), the headers captured from the page; it is removed right after.
+const ANALYSIS_RULE_BASE = 1900000000; // far above the player rules (tabId + 1) and 1001-1003
+let analysisRuleSeq = 0;
+
+async function addAnalysisRule(url, headers) {
+  if (!headers || !browser.declarativeNetRequest || !browser.declarativeNetRequest.updateSessionRules) return 0;
+  const requestHeaders = playerHeaderRuleHeaders({
+    referer: headers.referer || '',
+    origin: headers.origin || originOf(headers.referer || ''),
+    cookie: settings.forwardCookies ? (headers.cookie || '') : ''
+  });
+  // urlFilter treats | * ^ as syntax, and only takes ASCII
+  if (!requestHeaders.length || /[|*^]/.test(url) || /[^\x21-\x7e]/.test(url)) return 0;
+  const id = ANALYSIS_RULE_BASE + (analysisRuleSeq++ % 1000000);
+  try {
+    await browser.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [id],
+      addRules: [{
+        id,
+        priority: 2,
+        action: { type: 'modifyHeaders', requestHeaders },
+        condition: { urlFilter: `|${url}|`, tabIds: [-1], resourceTypes: ['xmlhttprequest', 'other'] }
+      }]
+    });
+    return id;
+  } catch {
+    return 0;
+  }
+}
+
+async function fetchText(url, headers = null) {
+  const ruleId = await addAnalysisRule(url, headers);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
+  const timer = setTimeout(() => controller.abort(), 15000);
   try {
     const response = await fetch(url, { signal: controller.signal });
     if (!response.ok) return null;
@@ -399,6 +433,7 @@ async function fetchText(url) {
     return null;
   } finally {
     clearTimeout(timer);
+    if (ruleId) browser.declarativeNetRequest.updateSessionRules({ removeRuleIds: [ruleId] }).catch(() => {});
   }
 }
 
@@ -469,12 +504,51 @@ function parseMpd(text) {
   return { maxHeight, duration };
 }
 
+// Analysis attempts per stream ("tabId|url"): a failed fetch is tried again a few times (after
+// a delay, or when the page requests the playlist again), as the 1.4 release effectively did by
+// fetching on every detection.
+const analysisState = new Map();
+const ANALYSIS_ATTEMPTS = 3;
+
+function scheduleAnalysis(tabId, url, type, headers, delay = 0) {
+  const key = `${tabId}|${url}`;
+  const st = analysisState.get(key) || { running: false, attempts: 0, done: false, timer: null };
+  analysisState.set(key, st);
+  if (st.running || st.done || st.attempts >= ANALYSIS_ATTEMPTS) return;
+  if (st.timer) { clearTimeout(st.timer); st.timer = null; }
+  const run = async () => {
+    st.timer = null;
+    if (st.running || st.done) return;
+    st.running = true;
+    st.attempts++;
+    let ok = false;
+    try {
+      ok = await analyzeStream(tabId, url, type, headers);
+    } catch { /* treated as a failed attempt */ }
+    st.running = false;
+    if (ok) st.done = true;
+    else if (st.attempts < ANALYSIS_ATTEMPTS) st.timer = setTimeout(run, 3000 * st.attempts);
+  };
+  if (delay) st.timer = setTimeout(run, delay);
+  else run();
+}
+
+function forgetAnalyses(tabId) {
+  for (const [key, st] of analysisState) {
+    if (key.startsWith(`${tabId}|`)) {
+      if (st.timer) clearTimeout(st.timer);
+      analysisState.delete(key);
+    }
+  }
+}
+
 // Fetches and parses a playlist, then merges the findings into the stored stream.
-async function analyzeStream(tabId, url, type) {
+// Returns false when the playlist could not be fetched (worth another try).
+async function analyzeStream(tabId, url, type, headers = null) {
   const info = {};
   if (type === 'm3u8') {
-    const text = await fetchText(url);
-    if (!text) return;
+    const text = await fetchText(url, headers);
+    if (!text) return false;
     const parsed = parseM3u8(text, url);
     if (parsed.isMaster) {
       const byHeight = new Map();
@@ -492,27 +566,27 @@ async function analyzeStream(tabId, url, type) {
           label: heightLabel(v.height) || `${Math.round(v.bandwidth / 1000)}k`
         }));
       info.quality = heightLabel(Math.max(0, ...parsed.variants.map(v => v.height)));
-      const first = parsed.variants[0];
-      if (first) {
-        const mediaText = await fetchText(first.url);
-        if (mediaText) {
-          const media = parseM3u8(mediaText, first.url);
-          info.duration = media.duration;
-          info.segmentDir = media.segmentDir;
-        }
+      // Duration from a media playlist: the first variant, else the next ones (one may be refused)
+      for (const variant of parsed.variants.slice(0, 3)) {
+        const mediaText = await fetchText(variant.url, headers);
+        if (!mediaText) continue;
+        const media = parseM3u8(mediaText, variant.url);
+        info.duration = media.duration;
+        info.segmentDir = media.segmentDir;
+        break;
       }
     } else {
       info.duration = parsed.duration;
       info.segmentDir = parsed.segmentDir;
     }
   } else if (type === 'mpd') {
-    const text = await fetchText(url);
-    if (!text) return;
+    const text = await fetchText(url, headers);
+    if (!text) return false;
     const parsed = parseMpd(text);
     info.duration = parsed.duration;
     info.quality = heightLabel(parsed.maxHeight);
   } else {
-    return;
+    return true;
   }
 
   await runExclusive(tabId, async () => {
@@ -532,6 +606,7 @@ async function analyzeStream(tabId, url, type) {
     updateBadge(tabId);
     notifyContentScript(tabId);
   });
+  return true;
 }
 
 // ─── Domain helpers ───────────────────────────────────────────────────────────
@@ -683,6 +758,10 @@ async function addStreamLocked(tabId, url, contentType, duration, reqHeaders, ty
       saveStreams();
       notifyContentScript(tabId);
     }
+    // Requested again and still no duration: another chance for an analysis that failed
+    if (!existing.duration && (existing.type === 'm3u8' || existing.type === 'mpd')) {
+      scheduleAnalysis(tabId, url, existing.type, existing.headers);
+    }
     return;
   }
 
@@ -743,7 +822,7 @@ async function addStreamLocked(tabId, url, contentType, duration, reqHeaders, ty
 
   // Duration / real quality / variants arrive later without blocking detection
   if (streamType === 'm3u8' || streamType === 'mpd') {
-    analyzeStream(tabId, url, streamType).catch(() => {});
+    scheduleAnalysis(tabId, url, streamType, headers);
   }
 }
 
@@ -931,6 +1010,8 @@ async function setPlayerHeaderRule(tabId, ctx) {
   });
 }
 
+const subsParam = subtitles => JSON.stringify(subtitles.slice(0, 10).map(s => ({ url: s.url, label: s.label, lang: s.lang })));
+
 async function openWebPlayer(ctx) {
   let engine = settings.webPlayerEngine || 'vidstack';
   const isDash = (ctx.stream && ctx.stream.type === 'mpd') || /\.mpd(\?|#|$)/i.test(ctx.url);
@@ -941,7 +1022,7 @@ async function openWebPlayer(ctx) {
   const params = new URLSearchParams({ url: ctx.url });
   if (ctx.title) params.set('title', ctx.title);
   if (ctx.subtitles.length > 0) {
-    params.set('subs', JSON.stringify(ctx.subtitles.slice(0, 10).map(s => ({ url: s.url, label: s.label, lang: s.lang }))));
+    params.set('subs', subsParam(ctx.subtitles));
   }
   await openExtensionTab(page, params, ctx);
 }
@@ -969,6 +1050,8 @@ async function openExtensionTab(page, params, ctx) {
 async function openDownloadPage(ctx) {
   const params = new URLSearchParams({ url: ctx.url });
   if (ctx.title) params.set('title', ctx.title);
+  // The page's subtitles go into the MP4 as text tracks (or next to a plain file as .srt)
+  if (ctx.subtitles.length > 0) params.set('subs', subsParam(ctx.subtitles));
   await openExtensionTab('download.html', params, ctx);
   return { success: true };
 }
@@ -1224,6 +1307,7 @@ browser.tabs.onRemoved.addListener((tabId) => {
   pendingNav.delete(tabId);
   runExclusive(tabId, async () => {
     await storageReady;
+    forgetAnalyses(tabId);
     detectedStreams.delete(tabId);
     detectedSubtitles.delete(tabId);
     saveStreams();
@@ -1253,6 +1337,7 @@ browser.webRequest.onBeforeRequest.addListener(
     }
     runExclusive(tabId, async () => {
       await storageReady;
+      forgetAnalyses(tabId);
       if (!detectedStreams.has(tabId) && !detectedSubtitles.has(tabId)) return;
       detectedStreams.delete(tabId);
       detectedSubtitles.delete(tabId);

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   detectFormat, srtToVtt, assToVtt, ttmlToVtt, timedTextToVtt, toWebVtt,
-  decodeSubtitleBytes, vttTime, loadSubtitleAsVtt
+  decodeSubtitleBytes, vttTime, loadSubtitleAsVtt, parseVttCues, vttTimestampOffset, cuesToSrt
 } from '../src/subtitles.mjs';
 
 // cue lines of a VTT document, without the header
@@ -134,4 +134,20 @@ test('loadSubtitleAsVtt: fetches, decodes and converts; HTTP errors throw', asyn
   assert.equal(r.format, 'srt');
   assert.match(r.vtt, /00:00:01.000 --> 00:00:02.000\nHi/);
   await assert.rejects(loadSubtitleAsVtt({ url: 'https://x/missing.srt' }, fakeFetch), /HTTP 404/);
+});
+
+test('parseVttCues: times, markup dropped, entities decoded, blocks without timing skipped', () => {
+  const vtt = 'WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:900000,LOCAL:00:00:00.000\n\nNOTE hi\n\n1\n00:01.500 --> 00:00:03.000 line:90%\n<i>Hello</i> &amp; <c.yellow>bye</c>\nsecond\n\n01:00:00.000 --> 01:00:01.250\nLate\n\n00:05.000 --> 00:04.000\nbackwards\n';
+  assert.deepEqual(parseVttCues(vtt), [
+    { start: 1.5, end: 3, text: 'Hello & bye\nsecond' },
+    { start: 3600, end: 3601.25, text: 'Late' }
+  ]);
+});
+
+test('vttTimestampOffset and cuesToSrt', () => {
+  assert.equal(vttTimestampOffset('WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:900000,LOCAL:00:00:00.000\n'), 10);
+  assert.equal(vttTimestampOffset('WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:02.000,MPEGTS:270000\n'), 1);
+  assert.equal(vttTimestampOffset('WEBVTT\n\n00:01.000 --> 00:02.000\nx\n'), null);
+  assert.equal(cuesToSrt([{ start: 61.5, end: 62, text: 'B' }, { start: 1, end: 2.25, text: 'A\na' }]),
+    '1\n00:00:01,000 --> 00:00:02,250\nA\na\n\n2\n00:01:01,500 --> 00:01:02,000\nB\n');
 });

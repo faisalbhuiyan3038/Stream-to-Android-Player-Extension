@@ -123,6 +123,13 @@ test('master playlist: quality, variants and duration', async () => {
   assert.equal(items[0].duration, '1:00');
 });
 
+test('duration of a playlist that needs the page Referer', async () => {
+  await open('/p/secure');
+  const items = await until(async () => { const r = await readItems(); return r.length === 1 && r[0].duration ? r : null; });
+  assert.ok(items, `no duration: ${JSON.stringify(await readItems())} referers ${JSON.stringify(site.log.secureReferers)}`);
+  assert.equal(items[0].duration, '0:05');
+});
+
 test('subtitles: <track> and network subtitles give a CC badge', async () => {
   await open('/p/subs');
   const items = await until(async () => { const r = await readItems(); return r.length && r[0].subs === 'CC 2' ? r : null; });
