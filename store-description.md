@@ -5,7 +5,8 @@ A browser extension to detect streaming videos (M3U8, MPD, MP4) and send them to
 **Changelog**
 1.6
 - Download videos as MP4 right in the browser, no extra setup needed. Works on Android too.
-- Choose the quality and audio language before downloading.
+- Choose the quality and audio language before downloading. Subtitles are saved inside the MP4 (and optionally as .srt files).
+- Duration and quality now show right away, also on sites that protect their video links.
 - Faster loading in the built-in player. Videos start and skip ahead much quicker on slow sites.
 - Built-in player works much better on phones: bigger buttons, double-tap to skip 10 seconds, quality, subtitle and speed menus, and landscape in fullscreen.
 - Built-in player remembers where you stopped and your playback speed.
@@ -14,6 +15,8 @@ A browser extension to detect streaming videos (M3U8, MPD, MP4) and send them to
 - Finds more videos, including ones inside embedded players.
 - Option to open .m3u8 and .mpd links directly in the built-in player.
 - Better whitelist/blacklist matching, and you can add your own detection patterns.
+- Settings changes apply to open pages instantly.
+- Removed unused permissions.
 - Many fixes and improvements.
 1.5
 - Sends the page's referrer and user agent along with the stream, so more streams play in external players. Cookies can be sent too (off by default).
@@ -47,8 +50,9 @@ A browser extension to detect streaming videos (M3U8, MPD, MP4) and send them to
 
 **Features**
 **Stream Detection**
-- Detects streaming formats: **M3U8 (HLS), MP4, DASH (MPD), MPEG-TS, WebM, H.264/AVC, H.265/HEVC**.
-- Extracts video sources from <video> and <source> tags.
+- Detects streaming formats: **M3U8 (HLS), DASH (MPD), MP4, MPEG-TS, WebM** and other video files.
+- Watches the page's network requests and extracts video sources from <video> and <source> tags.
+- Finds subtitle files (VTT, SRT, ASS, TTML) used by the page.
 - Filters non-video URLs (e.g., data:, blob:).
 - Supports **quality detection** (e.g., 1080p, 4K) from the stream itself.
 - Finds videos inside embedded players too.
@@ -79,9 +83,9 @@ A browser extension to detect streaming videos (M3U8, MPD, MP4) and send them to
   - Set **maximum stream count** (e.g., limit to 5 streams).
   - Customize **default actions** (e.g., "Share" on Android, "Copy" on Desktop).
 - **Stream Menu**:
-  - Displays detected streams with **quality badges** (e.g., "1080p").
-  - Shows **duration** (if available).
-  - Supports **keyboard shortcuts** (e.g., fullscreen).
+  - A floating ▶️ button on the page (drag it anywhere) and a stream count on the toolbar icon.
+  - Displays detected streams with **quality badges** (e.g., "1080p"), **duration** and a subtitle count.
+  - **Right-click menu** on links and videos, and the **Alt+Shift+P** shortcut to send the first stream.
 - **Notifications**: Alerts for errors (e.g., failed player launches).
 
 **Customization**
@@ -94,10 +98,11 @@ A browser extension to detect streaming videos (M3U8, MPD, MP4) and send them to
 
 **Installation**
 1. **Browser Extension**:
-   - Download the latest release from [Firefox Store](https://addons.mozilla.org/en-US/firefox/addon/stream-to-android-player/).
+   - Firefox and Firefox for Android: [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/stream-to-android-player/).
+   - Chrome, Edge and other Chromium browsers: [Chrome Web Store](https://chromewebstore.google.com/detail/oamkakadoiomoidknbdmeipejacdkhml).
 
 2. **Native Host Setup** (Optional, desktop only. Only needed to open streams directly in VLC/MPV or download with yt-dlp. The built-in player and downloader work without it):
-   - Download the **Native Host** zip from [GitHub Releases](https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension/releases/tag/v1.0.0).
+   - Download the **Native Host** zip from [GitHub Releases](https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension/releases/tag/native-host-v2.0.0).
    - Follow the setup instructions below for your OS.
 
 **Usage**
@@ -110,10 +115,19 @@ A browser extension to detect streaming videos (M3U8, MPD, MP4) and send them to
 The native host is needed to open streams directly in VLC, MPV, or other players on desktop.
 
 **Windows**
-1. Download the **Native Host** zip from [GitHub Releases](https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension/releases/tag/v1.0.0).
+1. Download the **Native Host** zip from [GitHub Releases](https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension/releases/tag/native-host-v2.0.0).
 2. Extract the zip file.
 3. Run the install.bat file (no Administrator rights needed).
 4. Restart your browser, then choose Native Messaging in the extension popup and press Test native host.
+
+**Linux / macOS**
+1. Download and extract the same zip.
+2. In a terminal in the extracted folder, run: bash install.sh (for Chrome/Edge add your extension ID: bash install.sh <extension-id>).
+3. Restart your browser and test it from the popup as above.
+
+Note: Linux/macOS is not tested manually, so if you face issues, send an email or leave a review and I will look into it.
+
+On Windows, Chrome/Edge also need the extension ID: run install.bat <extension-id> (the ID is shown on the extensions page).
 
 **Supported Players**
 - **VLC**: Works out of the box.
@@ -122,13 +136,14 @@ The native host is needed to open streams directly in VLC, MPV, or other players
 
 **Troubleshooting**
 **Extension Issues**
-- **Extension icon not appearing**:
-  - Ensure the extension is loaded correctly in **Developer Mode**.
+- **Floating button not appearing**:
+  - Play the video first; many sites only load the stream when playback starts.
+  - Check that the extension and the site are switched on in the popup.
   - Refresh the webpage or restart the browser.
 
 - **Streams not detected**:
   - The website may use a **non-standard format** (e.g., DRM-protected streams).
-  - Check the extension popup for **error logs**.
+  - Add your own detection pattern in the popup (e.g. "m3u8 /videoplayback/" lists every address containing "videoplayback" as an HLS stream).
   - Try **whitelisting** the domain in settings.
 
 - **Popup UI not responding**:

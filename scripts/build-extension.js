@@ -79,9 +79,39 @@ function packageBrowser(target) {
   console.log(`[OK] Created release package: releases/${zipName}`);
 }
 
+// Native host release: the files a user needs to install it. firefox_manifest.json is left out on
+// purpose: in this checkout it is the installed copy with this machine's path, and install.bat /
+// install.sh write a fresh one. Caches and logs are left out too.
+const NATIVE_HOST_VERSION = '2.0.0'; // protocol v2 (host.py: ping / launch / download)
+const NATIVE_HOST_FILES = ['host.py', 'host.bat', 'install.bat', 'uninstall.bat', 'install.sh', 'chrome_manifest.json', 'protocol-handler'];
+
+function packageNativeHost() {
+  const srcDir = path.join(rootDir, 'native-host');
+  const zip = new AdmZip();
+  for (const file of NATIVE_HOST_FILES) {
+    const src = path.join(srcDir, file);
+    if (!fs.existsSync(src)) {
+      console.error(`Error: native-host/${file} not found.`);
+      process.exit(1);
+    }
+    if (fs.statSync(src).isDirectory()) {
+      zip.addLocalFolder(src, `native-host/${file}`, name => !/__pycache__|\.pyc$|\.log$/.test(name));
+    } else {
+      zip.addLocalFile(src, 'native-host');
+    }
+  }
+  zip.addLocalFile(path.join(rootDir, 'LICENSE.md'), 'native-host');
+  const outDir = path.join(rootDir, 'releases', 'native-host-releases');
+  fs.mkdirSync(outDir, { recursive: true });
+  const zipName = `native-host-v${NATIVE_HOST_VERSION}.zip`;
+  zip.writeZip(path.join(outDir, zipName));
+  console.log(`[OK] Created native host package: releases/native-host-releases/${zipName}`);
+}
+
 function main() {
   const targetArg = args.find(a => a.startsWith('--target='));
   const isPackage = args.includes('--package');
+  const isNativeHost = args.includes('--native-host');
 
   if (targetArg) {
     const target = targetArg.split('=')[1];
@@ -94,11 +124,14 @@ function main() {
     packageBrowser('firefox');
   }
 
-  if (!targetArg && !isPackage) {
+  if (isNativeHost) packageNativeHost();
+
+  if (!targetArg && !isPackage && !isNativeHost) {
     console.log('Usage:');
     console.log('  node scripts/build-extension.js --target=chrome   (Switches root manifest to Chrome)');
     console.log('  node scripts/build-extension.js --target=firefox  (Switches root manifest to Firefox)');
     console.log('  node scripts/build-extension.js --package         (Builds release zips in releases/)');
+    console.log('  node scripts/build-extension.js --native-host     (Builds the native host zip in releases/native-host-releases/)');
   }
 }
 

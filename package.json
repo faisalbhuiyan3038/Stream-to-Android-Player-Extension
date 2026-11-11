@@ -17,6 +17,7 @@
     "target:chrome": "node scripts/build-extension.js --target=chrome",
     "target:firefox": "node scripts/build-extension.js --target=firefox",
     "package": "node scripts/build-extension.js --package",
+    "package:native-host": "node scripts/build-extension.js --native-host",
     "release": "node scripts/build-release.js --target=all",
     "release:chrome": "node scripts/build-release.js --target=chrome",
     "release:firefox": "node scripts/build-release.js --target=firefox"

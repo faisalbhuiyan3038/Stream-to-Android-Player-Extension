@@ -100,7 +100,7 @@ Several ideas in this release come from the open-source [FastStream](https://git
    - Download the latest release from [Firefox Store](https://addons.mozilla.org/en-US/firefox/addon/stream-to-android-player/).
 
 2. **Native Host Setup** (desktop, optional — only to open streams in VLC/mpv directly or download with yt-dlp; the built-in player and downloader need no setup):
-   - Download the **Native Host** zip from [GitHub Releases](https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension/releases/tag/v1.0.0).
+   - Download the **Native Host** zip from [GitHub Releases](https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension/releases/tag/native-host-v2.0.0).
    - Follow the setup instructions below for your OS.
 
 ## Usage
@@ -113,7 +113,7 @@ Several ideas in this release come from the open-source [FastStream](https://git
 The native host is required to open streams directly in VLC, MPV, or other players on desktop.
 
 ### Windows
-1. Download the **Native Host** zip from [GitHub Releases](https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension/releases/tag/v1.0.0).
+1. Download the **Native Host** zip from [GitHub Releases](https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension/releases/tag/native-host-v2.0.0).
 2. Extract the zip file.
 3. Run `native-host\install.bat` (no administrator rights needed; it only writes to your user registry). For Chrome/Edge/Brave pass or enter the extension ID shown in `chrome://extensions`.
 4. Restart your browser, then choose *Native Messaging* under *External Player Integration* in the popup and press *Test native host*.
