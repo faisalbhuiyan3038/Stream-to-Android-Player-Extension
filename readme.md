@@ -7,7 +7,6 @@ A browser extension to detect streaming videos (HLS, DASH, MP4) and send them to
 
 ## Changelog
 ### 1.6
-Several ideas in this release come from the open-source [FastStream](https://github.com/Andrews54757/FastStream) extension (credited in the code where they are used).
 - **Download as MP4, no setup**: the ⬇️ button (now on by default, also on Android) opens a downloader that saves HLS (incl. MPEG-TS, separate audio tracks and AES-128 encryption), DASH and plain files as one MP4 that VLC, MX Player, mpv and browsers can open and seek. Pick the quality and audio language first. The page's subtitles (and subtitle tracks listed in the stream) are put into the MP4 as subtitle tracks, and can also be saved as `.srt` files next to it. yt-dlp/ffmpeg through the native host is still available on desktop.
 - **Faster buffering** in the built-in players: upcoming segments are downloaded several at a time (it ramps up only while that helps), so slow servers start and seek much faster. Settings: on/off, parallel downloads, how far ahead to buffer.
 - **Built-in players on phones**: the Shaka player now uses Shaka's own touch interface (big controls, double-tap to seek ±10 s, quality / subtitles / language / speed menus, landscape in fullscreen); both players fill the screen in portrait and landscape. They remember where you stopped ("Resumed at 12:34 · Start over"), your playback speed and, in Shaka, your chosen quality.
