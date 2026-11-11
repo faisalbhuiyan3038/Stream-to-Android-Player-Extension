@@ -23,7 +23,8 @@ const EXTENSION_FILES = [
   'download.html',
   'download.css',
   'download.bundle.js',
-  'icons'
+  'icons',
+  'LICENSE.md'
 ];
 
 function switchTarget(target) {
@@ -101,4 +102,6 @@ function main() {
   }
 }
 
-main();
+if (require.main === module) main();
+
+module.exports = { EXTENSION_FILES };

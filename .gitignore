@@ -2,3 +2,4 @@ node_modules
 native-host/host.log
 test-results/
 __pycache__/
+dist/

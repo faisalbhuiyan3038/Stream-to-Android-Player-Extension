@@ -1,7 +1,7 @@
 # Stream to Android Player Extension
 
 [![GitHub release](https://img.shields.io/github/v/release/faisalbhuiyan3038/Stream-to-Android-Player-Extension)](https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension/releases)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE.md)
 
 A browser extension to detect streaming videos (HLS, DASH, MP4) and send them to your preferred media player on Android and desktop, play them in a built-in player, or save them as MP4. Supports VLC, MPV, MX Player and other players.
 
@@ -17,6 +17,8 @@ Several ideas in this release come from the open-source [FastStream](https://git
 - **Better detection**: readable titles from the page ("Dark Matter S01E05" instead of "Watch Dark Matter Season 1 Episode 5 Online Free - Site"), used for the list, players and file names; streams inside embedded players (iframes) and requested by a page's service worker are found; error responses are ignored; stream addresses hidden in a link's query string are recognised; your own detection patterns (`m3u8 /regex/`).
 - **Allow/block lists** match whole domain names (`ads.com` no longer matches `roads.com.au`) and understand `-exact.host`, `~regex` and `!exception`.
 - **Cookies** reach the built-in player when "Forward cookies" is on; the player tab's Referer no longer follows it to other sites.
+- **Settings apply at once**: switching the extension or a site off, "Clean names" and the button visibility change open pages immediately, without reloading them.
+- **Release build**: `npm run release` (or `release:chrome` / `release:firefox`) makes a minified copy in `dist/<browser>/` and a zip in `releases/`.
 - Tests: phone-emulation tests, real HLS test media, download/merge tests; CI runs the browser tests on Windows.
 ### 1.5
 - **Referer / User-Agent forwarding**: the page's headers are sent along with the stream to the built-in players (Referer/Origin rewrite), mpv/VLC (native host, `--referrer`, `--user-agent`, VLC HTTP) and optionally cookies (off by default).
@@ -163,4 +165,4 @@ In the popup you can set the player path, an argument template and a download fo
   - Check for **CORS errors** in the browser console.
 
 ## License
-This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the **GNU General Public License v3.0 or later**. See the [LICENSE.md](LICENSE.md) file for details.

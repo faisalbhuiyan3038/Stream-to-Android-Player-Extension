@@ -16,7 +16,10 @@ const defaultSettings = {
   showDownloadIcon: true,
   defaultTapAction: 'default',
   androidPlayer: 'auto',
-  buttonVisibility: 'always' // 'always' | 'fade' (translucent when idle) | 'never'
+  buttonVisibility: 'always', // 'always' | 'fade' (translucent when idle) | 'never'
+  enabled: true,
+  whitelist: [],
+  blacklist: []
 };
 let extSettings = { ...defaultSettings };
 let extPlatform = 'win';
@@ -489,10 +492,19 @@ function wakeButton() {
 
 // Shown only while there are streams, the user did not choose "hidden", and no
 // element (usually a video) is in fullscreen.
+// The extension switched off, or this site turned off from the popup (same rules as the background)
+function siteDisabled() {
+  if (extSettings.enabled === false) return true;
+  const host = location.hostname;
+  if (!host) return false;
+  if (StreamShared.matchesDomainList(host, extSettings.whitelist || [])) return false;
+  return StreamShared.matchesDomainList(host, extSettings.blacklist || []);
+}
+
 function updateButtonVisibility() {
   const button = document.getElementById('video-handler-button');
   if (!button) return;
-  const hidden = streams.length === 0 || extSettings.buttonVisibility === 'never' || !!document.fullscreenElement;
+  const hidden = streams.length === 0 || extSettings.buttonVisibility === 'never' || !!document.fullscreenElement || siteDisabled();
   button.style.display = hidden ? 'none' : 'flex';
   if (hidden) {
     const menu = document.getElementById('video-handler-menu');
@@ -744,6 +756,19 @@ browser.storage.onChanged.addListener((changes, area) => {
     applyButtonPosition();
   }
 });
+
+// Settings changed while this tab was in the background, restored from the back/forward cache,
+// or a change event that never arrived (phone popups): read them again when the tab is shown.
+function refreshSettings() {
+  browser.storage.local.get('settings').then(r => {
+    if (!r || !r.settings) return;
+    applyRuntimeState({ settings: r.settings });
+    if (document.getElementById('video-handler-menu')) updateMenu();
+    updateButtonVisibility();
+  }).catch(() => {});
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshSettings(); });
+window.addEventListener('pageshow', e => { if (e.persisted) refreshSettings(); });
 
 // Start observing when DOM is ready
 if (document.readyState === 'loading') {

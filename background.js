@@ -102,8 +102,10 @@ let settingsReady = browser.storage.local.get('settings').then(result => {
 // Listen for settings changes
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.settings) {
+    const cleanNamesBefore = settings.cleanNames;
     settings = { ...settings, ...changes.settings.newValue };
     syncLinkRedirectRules();
+    if (settings.cleanNames !== cleanNamesBefore) renameAllStreams().catch(() => {});
   }
 });
 
@@ -718,6 +720,34 @@ async function tabForWorkerRequest(details) {
 
 // ─── Add a stream to a tab ───────────────────────────────────────────────────
 
+// "Index (m3u8)" with "Clean names" on, else the file name
+function baseDisplayName(url, type) {
+  return settings.cleanNames ? `${cleanStreamName(url)} (${type})` : url.split('/').pop().split('?')[0];
+}
+
+// Numbers a name that is already in the list: "Index (m3u8) #2"
+function numberedName(name, others) {
+  const dupes = others.filter(s => s.displayName === name || (s.displayName || '').startsWith(`${name} #`)).length;
+  return dupes > 0 ? `${name} #${dupes + 1}` : name;
+}
+
+// "Clean names" switched: rename the streams already listed, so open pages update at once
+async function renameAllStreams() {
+  await storageReady;
+  for (const tabId of [...detectedStreams.keys()]) {
+    await runExclusive(tabId, async () => {
+      const streams = detectedStreams.get(tabId) || [];
+      const renamed = [];
+      for (const s of streams) {
+        s.displayName = numberedName(baseDisplayName(s.url, s.type), renamed);
+        renamed.push(s);
+      }
+      notifyContentScript(tabId);
+    });
+  }
+  saveStreams();
+}
+
 function addStream(tabId, url, contentType, duration = null, reqHeaders = null, typeHint = null) {
   return runExclusive(tabId, () => addStreamLocked(tabId, url, contentType, duration, reqHeaders, typeHint));
 }
@@ -773,20 +803,7 @@ async function addStreamLocked(tabId, url, contentType, duration, reqHeaders, ty
   const quality = extractQuality(url, '');
   const rawName = url.split('/').pop().split('?')[0];
 
-  let displayName;
-  if (settings.cleanNames) {
-    displayName = cleanStreamName(url);
-    // Append type
-    displayName += ` (${streamType})`;
-  } else {
-    displayName = rawName;
-  }
-
-  // Number duplicates
-  const dupeCount = streams.filter(s => s.displayName === displayName).length;
-  if (dupeCount > 0) {
-    displayName += ` #${dupeCount + 1}`;
-  }
+  const displayName = numberedName(baseDisplayName(url, streamType), streams);
 
   const req = reqHeaders || {};
   const headers = {
@@ -1238,9 +1255,11 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   } else if (message.type === 'updateSettings') {
+    const cleanNamesBefore = settings.cleanNames;
     settings = { ...settings, ...message.settings };
     browser.storage.local.set({ settings });
     syncLinkRedirectRules();
+    if (settings.cleanNames !== cleanNamesBefore) renameAllStreams().catch(() => {});
   } else if (message.type === 'getStreamCount') {
     storageReady.then(() => {
       const streams = detectedStreams.get(message.tabId) || [];
