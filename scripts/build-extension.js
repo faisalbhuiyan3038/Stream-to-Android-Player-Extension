@@ -19,6 +19,8 @@ const EXTENSION_FILES = [
   'player-shaka.html',
   'player-shaka.bundle.js',
   'player-shaka.bundle.css',
+  'player-art.html',
+  'player-art.bundle.js',
   'player-common.css',
   'download.html',
   'download.css',

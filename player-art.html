@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Web Player</title>
+  <link rel="stylesheet" href="player-common.css">
+</head>
+<body>
+  <div id="error-message" role="alert"></div>
+  <!-- ArtPlayer builds its interface in this container (src/player-art.js) -->
+  <div id="art"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script src="player-art.bundle.js"></script>
+</body>
+</html>

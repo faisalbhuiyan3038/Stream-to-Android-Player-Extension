@@ -63,7 +63,7 @@ A browser extension to detect streaming videos (M3U8, MPD, MP4) and send them to
   - **Native Messaging** (browser-to-app communication).
   - **Protocol Handlers** (e.g., vlc://, mpv://).
   - **VLC HTTP Interface** (remote control).
-- **In-Browser Playback**: Shaka Player (HLS/DASH/MP4) and Vidstack, made for both desktop and phones.
+- **In-Browser Playback**: Shaka Player (HLS/DASH/MP4), ArtPlayer (HLS/DASH/MP4) and Vidstack, made for both desktop and phones.
 
 **Download**
 - Save videos as **MP4** right in the browser, on desktop and Android. No extra setup needed.
@@ -167,7 +167,7 @@ On Windows, Chrome/Edge also need the extension ID: run install.bat <extension-i
   - For **VLC HTTP Interface**, verify the password in settings.
 
 - **In-Browser Playback**:
-  - Try the other player (Shaka Player/Vidstack) in settings.
+  - Try another player (Shaka Player/ArtPlayer/Vidstack) in settings.
   - Open the video from the stream list on its page, not from a copied link, so the site's details are sent along.
 
 - **Downloads**:

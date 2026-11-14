@@ -241,6 +241,34 @@ test('Shaka page: SRT (cp1252), ASS and TTML subtitles are converted and loaded'
   await page.close();
 });
 
+test('ArtPlayer page: SRT (cp1252), ASS and TTML subtitles converted, drawn with italics kept, "c" cycles them', async () => {
+  const page = await ctx.newPage();
+  await page.goto(`chrome-extension://${extId}/player-art.html?${subsQuery()}`);
+  const done = await until(async () => { const s = await readStatus(page); return s.length === 3 && !s.some(x => x.endsWith(':pending')); }, { timeout: 20000 });
+  assert.ok(done, `subtitles never processed: ${JSON.stringify(await readStatus(page))}`);
+  assert.deepEqual(await readStatus(page), ['SRT:srt:converted', 'ASS:ass:converted', 'TTML:ttml:converted']);
+  await until(() => page.evaluate(() => window._subtitleSelected === 'SRT'));
+  const shown = async () => page.evaluate(() => (document.querySelector('.art-subtitle') || {}).innerHTML || '');
+  const atStart = () => page.evaluate(async () => { const v = document.querySelector('video'); v.pause(); v.currentTime = 1; await new Promise(r => setTimeout(r, 400)); });
+  await atStart();
+  assert.match(await until(async () => { const h = await shown(); return h.includes('Café') ? h : null; }) || '', /Café “quoted”/);
+  await page.keyboard.press('c');
+  await until(() => page.evaluate(() => window._subtitleSelected === 'ASS'));
+  await atStart();
+  const ass = await until(async () => { const h = await shown(); return h.includes('Styled') ? h : null; });
+  assert.match(ass || '', /<i>Styled<\/i> line, with comma/);
+  await page.keyboard.press('c');
+  await page.keyboard.press('c');
+  await until(() => page.evaluate(() => window._subtitleSelected === null));
+  await atStart();
+  // off: the subtitle layer is hidden
+  assert.equal(await page.evaluate(() => { const el = document.querySelector('.art-subtitle'); return !el || el.offsetHeight === 0 || getComputedStyle(el).display === 'none' || getComputedStyle(el).visibility === 'hidden'; }), true);
+  // the settings panel lists them (with "Off") and a subtitle size
+  const names = await page.$$eval('.art-setting-item', els => els.map(e => e.dataset.name).filter(Boolean));
+  assert.ok(names.includes('sap-subtitles') && names.includes('sap-subtitle-size'), `settings: ${names}`);
+  await page.close();
+});
+
 // ── header forwarding ────────────────────────────────────────────────────────
 
 test('captures the page Referer / User-Agent on the stream', async () => {
@@ -325,6 +353,25 @@ test('DASH streams are routed to the Shaka page (button and direct Vidstack link
   assert.match(direct.url(), /player-shaka\.html\?url=/);
   await direct.close();
   await page.close();
+});
+
+test('ArtPlayer engine: HLS and DASH streams open in the ArtPlayer page and play', async () => {
+  await setSettings({ webPlayerEngine: 'artplayer' });
+  for (const [route, isDash] of [['/p/dash-real', true], ['/p/subs', false]]) {
+    const page = await openSite(route);
+    await until(async () => (await readItems(page)).length >= 1, { timeout: 15000 });
+    await page.click('#video-handler-button');
+    const [player] = await Promise.all([ctx.waitForEvent('page'), page.click('.v-action-play')]);
+    await until(() => player.url().includes('player-art.html'));
+    assert.match(player.url(), /player-art\.html\?url=/);
+    if (isDash) {
+      const playing = await until(() => player.evaluate(() => { const v = document.querySelector('video'); return v && v.currentTime > 0.3 && v.videoWidth > 0; }), { timeout: 20000 });
+      assert.ok(playing, 'DASH did not play in ArtPlayer');
+    }
+    await player.close();
+    await page.close();
+  }
+  await setSettings({ webPlayerEngine: 'vidstack' });
 });
 
 test('popup lists the streams of a tab', async () => {
@@ -585,6 +632,15 @@ test('faster buffering: Vidstack/hls.js loads segments in parallel and buffers s
   assert.ok(on.playable && off.playable, 'video not playable');
   assert.ok(on.prefetch && on.prefetch.hits > 0, `player never used a prefetched segment: ${JSON.stringify(on.prefetch)}`);
   assert.ok(on.ms < off.ms * 0.75, `not faster: on ${on.ms} ms vs off ${off.ms} ms`);
+});
+
+test('faster buffering: ArtPlayer/hls.js loads segments in parallel and buffers sooner', async (t) => {
+  const off = await bufferRun('player-art.html', false);
+  const on = await bufferRun('player-art.html', true);
+  t.diagnostic(`artplayer off: ${off.ms} ms, ${off.conc} at once; on: ${on.ms} ms, ${on.conc} at once`);
+  assert.ok(on.conc >= 2, `no parallel downloads: ${JSON.stringify(on)}`);
+  assert.ok(on.prefetch && on.prefetch.hits > 0, `player never used a prefetched segment: ${JSON.stringify(on.prefetch)}`);
+  assert.ok(on.ms < off.ms, `not faster: on ${on.ms} ms vs off ${off.ms} ms`);
 });
 
 test('faster buffering: Shaka prefetches segments in parallel', async (t) => {
@@ -859,7 +915,7 @@ async function saveFromBadge(page) {
   return { dlPage, state, data, name: download.suggestedFilename() };
 }
 
-for (const [name, file] of [['Vidstack/hls.js', 'player.html'], ['Shaka', 'player-shaka.html']]) {
+for (const [name, file] of [['Vidstack/hls.js', 'player.html'], ['Shaka', 'player-shaka.html'], ['ArtPlayer/hls.js', 'player-art.html']]) {
   test(`whole video (${name}): downloads to the end while paused, each segment once; Save needs no second download`, async (t) => {
     await setSettings({ cacheWholeVideo: true, cacheLimitGB: 0, bufferAheadSeconds: 10, fastBufferingParallel: 4 });
     site.log.big.length = 0;
@@ -900,7 +956,7 @@ test('whole video: an unreliable server (503 / 429 on every segment) is retried 
   await run.page.close();
 });
 
-for (const [name, file] of [['Vidstack', 'player.html'], ['Shaka', 'player-shaka.html']]) {
+for (const [name, file] of [['Vidstack', 'player.html'], ['Shaka', 'player-shaka.html'], ['ArtPlayer', 'player-art.html']]) {
   test(`whole video (${name}): a plain file is cached as byte ranges, then plays from the local copy and saves as it is`, async () => {
     await setSettings({ cacheWholeVideo: true, bufferAheadSeconds: 0 });
     const run = await cacheRun(file, `${ORIGIN}/media/real.webm`, { title: 'Clip' });
@@ -925,7 +981,7 @@ for (const [name, file] of [['Vidstack', 'player.html'], ['Shaka', 'player-shaka
   });
 }
 
-for (const [name, file] of [['Vidstack/hls.js', 'player.html'], ['Shaka', 'player-shaka.html']]) {
+for (const [name, file] of [['Vidstack/hls.js', 'player.html'], ['Shaka', 'player-shaka.html'], ['ArtPlayer/hls.js', 'player-art.html']]) {
   test(`whole video (${name}): one quality (closest to the screen) is played and downloaded; Save preselects it`, async (t) => {
     await setSettings({ cacheWholeVideo: true, bufferAheadSeconds: 10 });
     // the 720 px window asks for ~790 px: 720p, not 360p
@@ -942,6 +998,57 @@ for (const [name, file] of [['Vidstack/hls.js', 'player.html'], ['Shaka', 'playe
     await run.page.close();
   });
 }
+
+for (const [name, file] of [['Shaka', 'player-shaka.html'], ['ArtPlayer/Shaka', 'player-art.html']]) {
+  test(`whole video (${name}) DASH: video + audio downloaded completely; Save builds the MP4 from the cache`, async (t) => {
+    await setSettings({ cacheWholeVideo: true, bufferAheadSeconds: 10 });
+    const run = await cacheRun(file, `${ORIGIN}/dash-real/manifest.mpd`, { title: 'Dash Clip' });
+    t.diagnostic(JSON.stringify({ progress: run.progress, stats: run.stats }));
+    assert.equal(run.progress.total, 26, '2 init segments + 12 video + 12 audio segments');
+    const saved = await saveFromBadge(run.page);
+    assert.equal(saved.state.state, 'done', JSON.stringify(saved.state));
+    assert.equal(saved.state.fromNetwork, 0);
+    assert.deepEqual(saved.state.tracks.map(x => x.handler).sort(), ['soun', 'vide']);
+    const media = await probeMedia(saved.data, 'video/mp4');
+    assert.ok(Math.abs(media.duration - 24) < 1.5, `duration ${media.duration}`);
+    assert.ok(media.audioBytes > 0 && media.videoBytes > 0, 'audio or video not decoded');
+    await saved.dlPage.close();
+    await run.page.close();
+  });
+}
+
+test('ArtPlayer: the quality menu switches the quality, and the download follows it', async () => {
+  await setSettings({ cacheWholeVideo: true, bufferAheadSeconds: 10 });
+  const run = await cacheRun('player-art.html', `${ORIGIN}/multi-hls/master.m3u8`);
+  const plan = () => run.page.evaluate(() => window._cache.plan.map(i => i.url).filter(u => u.includes('.m4s')));
+  assert.ok((await plan()).every(u => u.endsWith('?q=high')));
+  await run.page.mouse.move(400, 300);
+  await run.page.click('.art-control-setting');
+  await run.page.locator('.art-setting-item[data-name="sap-quality"]').click();
+  const item = run.page.locator('.art-setting-item:not(.art-setting-item-back)', { hasText: /^\s*360p\s*$/ });
+  await item.waitFor({ state: 'visible', timeout: 5000 });
+  await item.click();
+  const low = await until(async () => { const p = await plan(); return p.length && p.every(u => u.endsWith('?q=low')) ? p : null; }, { timeout: 10000 });
+  assert.ok(low, `the download did not follow: ${JSON.stringify(await plan())}`);
+  assert.ok(await until(() => run.page.evaluate(() => window._cache.progress().complete), { timeout: 20000 }));
+  assert.equal(await run.page.evaluate(() => window._hls.currentLevel), 0);
+  await run.page.evaluate(() => localStorage.clear()); // forget the 360p preference
+  await run.page.close();
+});
+
+test('ArtPlayer: arrow keys seek 10 s, the screenshot button saves a PNG', async () => {
+  const page = await ctx.newPage();
+  await page.goto(`chrome-extension://${extId}/player-art.html?url=${encodeURIComponent(`${ORIGIN}/hls-real/index.m3u8`)}&title=Shot`);
+  await until(() => page.evaluate(() => { const v = document.querySelector('video'); return v && v.readyState >= 3 && v.currentTime > 0.2; }), { timeout: 20000 });
+  await page.evaluate(async () => { const v = document.querySelector('video'); v.pause(); v.currentTime = 2; await new Promise(r => setTimeout(r, 300)); });
+  await page.keyboard.press('ArrowRight');
+  const t = await until(() => page.evaluate(() => { const v = document.querySelector('video'); return v.currentTime >= 11.5 ? v.currentTime : null; }), { timeout: 5000 });
+  assert.ok(t && t < 12.5, `ArrowRight went to ${t}`);
+  await page.mouse.move(400, 300);
+  const [download] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }), page.click('.art-control-screenshot')]);
+  assert.match(download.suggestedFilename(), /\.png$/);
+  await page.close();
+});
 
 test('whole video: off in the settings means no cache (and no badge)', async () => {
   await setSettings({ cacheWholeVideo: false });

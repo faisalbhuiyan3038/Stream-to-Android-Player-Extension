@@ -119,9 +119,18 @@ browser.storage.onChanged.addListener((changes, area) => {
 
 const LINK_RULE_IDS = { streams: 1001, dash: 1002, mp4: 1003 };
 
+// The player page of an engine setting, and the page for DASH (Vidstack cannot play it: Shaka)
+const ENGINE_PAGES = { vidstack: 'player.html', shaka: 'player-shaka.html', artplayer: 'player-art.html' };
+function enginePageFor(engine) {
+  return ENGINE_PAGES[engine] || ENGINE_PAGES.vidstack;
+}
+function dashPageFor(engine) {
+  return engine === 'artplayer' ? 'player-art.html' : 'player-shaka.html';
+}
+
 // Pure: rules for the given settings. `pageUrl(name)` returns the extension URL of a page.
 function buildLinkRedirectRules(s, pageUrl) {
-  const enginePage = s.webPlayerEngine === 'shaka' ? 'player-shaka.html' : 'player.html';
+  const enginePage = enginePageFor(s.webPlayerEngine);
   const rule = (id, extensions, page) => ({
     id,
     priority: 1,
@@ -136,7 +145,7 @@ function buildLinkRedirectRules(s, pageUrl) {
   const rules = [];
   if (s.openStreamLinks) {
     rules.push(rule(LINK_RULE_IDS.streams, 'm3u8|m3u', enginePage));
-    rules.push(rule(LINK_RULE_IDS.dash, 'mpd', 'player-shaka.html'));
+    rules.push(rule(LINK_RULE_IDS.dash, 'mpd', dashPageFor(s.webPlayerEngine)));
   }
   if (s.openMp4Links) rules.push(rule(LINK_RULE_IDS.mp4, 'mp4|m4v', enginePage));
   return rules;
@@ -1032,11 +1041,11 @@ async function setPlayerHeaderRule(tabId, ctx) {
 const subsParam = subtitles => JSON.stringify(subtitles.slice(0, 10).map(s => ({ url: s.url, label: s.label, lang: s.lang })));
 
 async function openWebPlayer(ctx) {
-  let engine = settings.webPlayerEngine || 'vidstack';
+  const engine = settings.webPlayerEngine || 'vidstack';
   const isDash = (ctx.stream && ctx.stream.type === 'mpd') || /\.mpd(\?|#|$)/i.test(ctx.url);
-  // Vidstack 0.6 cannot play DASH. Both pages load subtitles (converted to WebVTT by src/subtitles.mjs).
-  if (isDash) engine = 'shaka';
-  const page = engine === 'shaka' ? 'player-shaka.html' : 'player.html';
+  // Vidstack 0.6 cannot play DASH (Shaka takes it); Shaka and ArtPlayer play everything.
+  // All three load subtitles (converted to WebVTT by src/subtitles.mjs).
+  const page = isDash ? dashPageFor(engine) : enginePageFor(engine);
 
   const params = new URLSearchParams({ url: ctx.url });
   if (ctx.title) params.set('title', ctx.title);

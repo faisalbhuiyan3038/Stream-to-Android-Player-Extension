@@ -209,7 +209,7 @@ test('migration: users who had the ⬇️ (native yt-dlp) on keep the native dow
 
 // ── Phase 3: direct stream links → web player ───────────────────────────────
 
-test('buildLinkRedirectRules: rules per setting, DASH always on Shaka, engine respected', () => {
+test('buildLinkRedirectRules: rules per setting, DASH on Shaka (or ArtPlayer), engine respected', () => {
   const page = p => `chrome-extension://id/${p}`;
   const rules = s => JSON.parse(JSON.stringify(bg.buildLinkRedirectRules(s, page)));
   assert.equal(rules({ openStreamLinks: false, openMp4Links: false }).length, 0);
@@ -221,6 +221,9 @@ test('buildLinkRedirectRules: rules per setting, DASH always on Shaka, engine re
   const shaka = rules({ openStreamLinks: true, openMp4Links: true, webPlayerEngine: 'shaka' });
   assert.deepEqual(shaka.map(r => r.id), [1001, 1002, 1003]);
   assert.ok(shaka.every(r => r.action.redirect.regexSubstitution.includes('player-shaka.html')));
+  // ArtPlayer plays DASH itself
+  const art = rules({ openStreamLinks: true, openMp4Links: true, webPlayerEngine: 'artplayer' });
+  assert.ok(art.every(r => r.action.redirect.regexSubstitution.includes('player-art.html')));
 });
 
 test('link rule regex: only the URL path decides, query strings do not', () => {

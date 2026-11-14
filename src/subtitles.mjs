@@ -402,3 +402,26 @@ export async function loadSubtitleAsVtt(sub, fetchFn = globalThis.fetch) {
   const text = decodeSubtitleBytes(await res.arrayBuffer());
   return toWebVtt(text, { url: sub.url, contentType: res.headers.get('content-type') || '' });
 }
+
+// ArtPlayer draws cue text as HTML. Keep only bare <i>, <b>, <u> (what the converters produce);
+// every other tag (voice, class, ruby, anything with attributes) is dropped, and stray < > are
+// escaped, so a subtitle file cannot put markup into the player page.
+export function sanitizeCueLine(line) {
+  return String(line)
+    .replace(/<(\/?)([a-z][\w.-]*)[^>]*>/gi, (m, slash, tag) => (/^[ibu]$/i.test(tag) && /^<\/?[ibu]>$/i.test(m) ? `<${slash}${tag.toLowerCase()}>` : ''))
+    .replace(/<(?!\/?[ibu]>)/g, '&lt;')
+    .replace(/(?<!<\/?[ibu])>/g, '&gt;');
+}
+
+// A WebVTT file with every cue text line passed through sanitizeCueLine
+export function sanitizeVttForHtml(vtt) {
+  const blocks = String(vtt).replace(/\r\n?/g, '\n').split(/\n{2,}/);
+  return blocks.map((block, i) => {
+    if (i === 0 && /^WEBVTT/.test(block)) return block;
+    if (/^(NOTE|STYLE|REGION)\b/.test(block)) return '';
+    const lines = block.split('\n');
+    const t = lines.findIndex(l => l.includes('-->'));
+    if (t < 0) return '';
+    return [...lines.slice(0, t + 1), ...lines.slice(t + 1).map(sanitizeCueLine)].join('\n');
+  }).filter(Boolean).join('\n\n').replace(/\n+$/, '') + '\n';
+}

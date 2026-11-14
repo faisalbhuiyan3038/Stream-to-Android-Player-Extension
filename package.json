@@ -13,14 +13,15 @@
     "build:vidstack": "esbuild src/player.js --bundle --minify --format=esm --outfile=player.bundle.js",
     "build:shaka": "esbuild src/player-shaka.js --bundle --minify --format=iife --global-name=ShakaInit --outfile=player-shaka.bundle.js",
     "build:download": "esbuild src/download.js --bundle --minify --format=iife --outfile=download.bundle.js",
-    "build": "npm run build:vidstack && npm run build:shaka && npm run build:download",
+    "build": "npm run build:vidstack && npm run build:shaka && npm run build:download && npm run build:art",
     "target:chrome": "node scripts/build-extension.js --target=chrome",
     "target:firefox": "node scripts/build-extension.js --target=firefox",
     "package": "node scripts/build-extension.js --package",
     "package:native-host": "node scripts/build-extension.js --native-host",
     "release": "node scripts/build-release.js --target=all",
     "release:chrome": "node scripts/build-release.js --target=chrome",
-    "release:firefox": "node scripts/build-release.js --target=firefox"
+    "release:firefox": "node scripts/build-release.js --target=firefox",
+    "build:art": "esbuild src/player-art.js --bundle --minify --format=iife --outfile=player-art.bundle.js"
   },
   "repository": {
     "type": "git",
@@ -40,6 +41,7 @@
   },
   "homepage": "https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension#readme",
   "dependencies": {
+    "artplayer": "^5.4.0",
     "hls.js": "^1.6.16",
     "shaka-player": "^5.1.5",
     "vidstack": "^0.6.15"

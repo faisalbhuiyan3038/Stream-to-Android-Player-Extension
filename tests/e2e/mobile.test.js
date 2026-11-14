@@ -61,7 +61,7 @@ async function openAt(url, view) {
 
 // ── layout ───────────────────────────────────────────────────────────────────
 
-for (const [engine, file] of [['Vidstack', 'player.html'], ['Shaka', 'player-shaka.html']]) {
+for (const [engine, file] of [['Vidstack', 'player.html'], ['Shaka', 'player-shaka.html'], ['ArtPlayer', 'player-art.html']]) {
   for (const [orient, view] of Object.entries(VIEWS)) {
     test(`${engine} player, ${orient}: fits the screen, controls are thumb-sized`, async () => {
       const page = await openAt(playerUrl(file), view);
@@ -125,6 +125,34 @@ test('in-page stream menu on a phone page: opens with a tap, stays on screen, th
 
 // ── gestures and memory ─────────────────────────────────────────────────────
 
+test('ArtPlayer: double tap seeks ±10 s on the sides, the badge and its Save button are thumb-sized', async () => {
+  const view = VIEWS.landscape;
+  const page = await openAt(`chrome-extension://${extId}/player-art.html?url=${encodeURIComponent(`${ORIGIN}/hls-real/index.m3u8`)}`, view);
+  await until(() => page.evaluate(() => { const v = document.querySelector('video'); return v && v.readyState >= 2 && v.duration > 20; }), { timeout: 15000 });
+  await page.evaluate(() => { const v = document.querySelector('video'); v.pause(); v.currentTime = 2; });
+  await until(() => page.evaluate(() => !document.querySelector('video').seeking));
+  const now = () => page.evaluate(() => document.querySelector('video').currentTime);
+  const doubleTap = async (x) => {
+    await page.touchscreen.tap(x, view.height * 0.4);
+    await sleep(120);
+    await page.touchscreen.tap(x, view.height * 0.4);
+  };
+  const before = await now();
+  await doubleTap(view.width * 0.85);
+  const fwd = await until(async () => { const t = await now(); return t >= before + 8 ? t : null; }, { timeout: 4000 });
+  assert.ok(fwd, `double tap right did not seek: ${before} → ${await now()}`);
+  await sleep(500);
+  await doubleTap(view.width * 0.15);
+  const back = await until(async () => { const t = await now(); return t <= fwd - 8 ? t : null; }, { timeout: 4000 });
+  assert.ok(back != null, `double tap left did not seek back: ${fwd} → ${await now()}`);
+  // whole video loaded: the Save button is big enough for a thumb
+  await until(() => page.evaluate(() => window._cache && window._cache.progress().complete), { timeout: 20000 });
+  await until(() => page.evaluate(() => !document.querySelector('.sap-cache button').hidden), { timeout: 3000 });
+  const b = await page.evaluate(() => { const r = document.querySelector('.sap-cache button').getBoundingClientRect(); return { w: r.width, h: r.height }; });
+  assert.ok(b.w >= MIN && b.h >= MIN, `Save button ${JSON.stringify(b)}`);
+  await page.close();
+});
+
 test('Shaka: double-tap on the right half seeks forward 10 s', async () => {
   const view = VIEWS.landscape;
   const page = await openAt(playerUrl('player-shaka.html'), view);
@@ -145,7 +173,7 @@ test('Shaka: double-tap on the right half seeks forward 10 s', async () => {
   await page.close();
 });
 
-for (const [engine, file] of [['Vidstack', 'player.html'], ['Shaka', 'player-shaka.html']]) {
+for (const [engine, file] of [['Vidstack', 'player.html'], ['Shaka', 'player-shaka.html'], ['ArtPlayer', 'player-art.html']]) {
   test(`${engine}: resumes where you stopped, with "Start over"; playback speed is remembered`, async () => {
     // Seed the memory (extension origin localStorage) as if the video had been left at 0:12
     const seed = await ctx.newPage();

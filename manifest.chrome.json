@@ -47,7 +47,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["player.html", "player-shaka.html"],
+      "resources": ["player.html", "player-shaka.html", "player-art.html"],
       "matches": ["<all_urls>"]
     }
   ],

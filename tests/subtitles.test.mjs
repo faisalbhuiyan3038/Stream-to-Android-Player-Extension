@@ -151,3 +151,13 @@ test('vttTimestampOffset and cuesToSrt', () => {
   assert.equal(cuesToSrt([{ start: 61.5, end: 62, text: 'B' }, { start: 1, end: 2.25, text: 'A\na' }]),
     '1\n00:00:01,000 --> 00:00:02,250\nA\na\n\n2\n00:01:01,500 --> 00:01:02,000\nB\n');
 });
+
+test('sanitizeVttForHtml keeps <i>/<b>/<u>, drops other tags and escapes stray brackets', async () => {
+  const { sanitizeVttForHtml, sanitizeCueLine } = await import('../src/subtitles.mjs');
+  assert.equal(sanitizeCueLine('<i>Hi</i> <b>there</b>'), '<i>Hi</i> <b>there</b>');
+  assert.equal(sanitizeCueLine('<v Bob>Hello</v> <c.yellow>x</c>'), 'Hello x');
+  assert.equal(sanitizeCueLine('<img src=x onerror=alert(1)>a < b > c'), 'a &lt; b &gt; c');
+  assert.equal(sanitizeCueLine('<i class="x">no</i>'), 'no</i>');
+  const out = sanitizeVttForHtml('WEBVTT\n\nNOTE hi\n\n1\n00:00.000 --> 00:01.000\n<script>x</script><u>ok</u>\n');
+  assert.equal(out, 'WEBVTT\n\n1\n00:00.000 --> 00:01.000\nx<u>ok</u>\n');
+});

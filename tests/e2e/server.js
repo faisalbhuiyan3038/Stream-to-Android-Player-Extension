@@ -48,6 +48,7 @@ function startServer() {
     }
     if (url === '/p/secure') return html('Secure', `<script>fetch('/secure/index.m3u8')</script>`);
     if (url === '/p/dash') return html('Dash', `<script>fetch('/dash/manifest.mpd')</script>`);
+    if (url === '/p/dash-real') return html('Dash Real', `<script>fetch('/dash-real/manifest.mpd')</script>`);
     // Phase 1 fixtures
     if (url === '/p/titled') {
       return html('Watch Dark Matter Season 1 Episode 5 Online Free - Localhost', `<script>fetch('/hls/early.m3u8')</script>`);
@@ -76,6 +77,28 @@ function startServer() {
         return setTimeout(() => { entry.end = Date.now(); send(200, type, fs.readFileSync(file)); }, 400);
       }
       return send(200, type, fs.readFileSync(file));
+    }
+
+    // The fixture as DASH (the same fMP4 segments): video + separate audio AdaptationSets,
+    // SegmentList with a SegmentTimeline built from the HLS playlists' durations
+    if (url === '/dash-real/manifest.mpd') {
+      const read = name => fs.readFileSync(path.join(__dirname, 'fixtures', 'hls', name), 'utf8').split(/\r?\n/);
+      const entries = (lines) => {
+        const out = [];
+        for (let i = 0; i < lines.length; i++) if (lines[i].startsWith('#EXTINF:')) out.push({ d: Math.round(parseFloat(lines[i].slice(8)) * 1000), uri: lines[i + 1] });
+        return out;
+      };
+      const v = entries(read('index.m3u8'));
+      const a = entries(read('audio.m3u8'));
+      const total = v.reduce((n, e) => n + e.d, 0) / 1000;
+      const list = (es, init) => `<SegmentList timescale="1000"><Initialization sourceURL="${ORIGIN}/hls-real/${init}"/><SegmentTimeline>${es.map(e => `<S d="${e.d}"/>`).join('')}</SegmentTimeline>${es.map(e => `<SegmentURL media="${ORIGIN}/hls-real/${e.uri}"/>`).join('')}</SegmentList>`;
+      return send(200, 'application/dash+xml', `<?xml version="1.0"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT${total.toFixed(3)}S" minBufferTime="PT2S" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011">
+<Period id="0">
+<AdaptationSet id="1" contentType="video" mimeType="video/mp4" segmentAlignment="true"><Representation id="v360" bandwidth="250000" width="320" height="180" codecs="avc1.42e01e">${list(v, 'init.mp4')}</Representation></AdaptationSet>
+<AdaptationSet id="2" contentType="audio" mimeType="audio/mp4" lang="en"><Representation id="a" bandwidth="64000" codecs="mp4a.40.2" audioSamplingRate="48000">${list(a, 'a-init.mp4')}</Representation></AdaptationSet>
+</Period>
+</MPD>`);
     }
 
     // Two qualities of the fixture stream (same media, different addresses): 360p and 720p

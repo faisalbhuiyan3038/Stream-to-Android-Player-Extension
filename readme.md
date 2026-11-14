@@ -7,6 +7,7 @@ A browser extension to detect streaming videos (HLS, DASH, MP4) and send them to
 
 ## Changelog
 ### Next (not released yet)
+- **ArtPlayer, a third built-in player** (pick it in the popup's player setting): plays HLS (hls.js), DASH (Shaka) and plain files with ArtPlayer's interface — a settings panel with quality, audio language, subtitles (on/off, choice, size) and **subtitle offset**, playback speed, aspect ratio, flip; screenshot, picture-in-picture, keyboard keys (space, ←/→ 10 s, ↑/↓ volume, F, M, C, P). On phones: double tap left/right to seek 10 s, swipe to seek, long-press for fast forward, a lock button, landscape in fullscreen, thumb-sized controls. Everything the other players do works here too: the whole video loads while you watch and Save, resume position, remembered speed and quality, converted subtitles (italics kept), page Referer/cookies.
 - **The whole video loads while you watch** (like FastStream): both built-in players keep downloading every segment of the playing quality to the end, several at a time, also while paused or in a background tab, and keep retrying when the server fails or rate-limits (it never gives up on a segment). The player is served from that copy, so it stops waiting on the network. A badge shows the progress and then **Save**: the MP4 is built from what is already downloaded, with no second download. Plain MP4/WebM files switch to the local copy once complete and are saved as they are. Works for HLS, DASH and plain files, for films and series episodes. Settings: on/off, storage limit (automatic: 8 GB, 3 GB on phones; longer videos keep a window ahead of where you are). With it on, one quality is played and downloaded: the one closest to your screen, or the one you picked last time (the quality menu still changes it).
 ### 1.6
 - **Download as MP4, no setup**: the ⬇️ button (now on by default, also on Android) opens a downloader that saves HLS (incl. MPEG-TS, separate audio tracks and AES-128 encryption), DASH and plain files as one MP4 that VLC, MX Player, mpv and browsers can open and seek. Pick the quality and audio language first. The page's subtitles (and subtitle tracks listed in the stream) are put into the MP4 as subtitle tracks, and can also be saved as `.srt` files next to it. yt-dlp/ffmpeg through the native host is still available on desktop.
@@ -67,7 +68,7 @@ A browser extension to detect streaming videos (HLS, DASH, MP4) and send them to
   - **Native Messaging** (browser-to-app communication).
   - **Protocol Handlers** (e.g., `vlc://`, `mpv://`).
   - **VLC HTTP Interface** (remote control).
-- **In-Browser Playback**: Shaka Player (HLS/DASH/MP4, touch-friendly) and Vidstack, which load the whole video while you watch (then save it without downloading again), with subtitles and resume.
+- **In-Browser Playback**: three players to choose from — Shaka Player (HLS/DASH/MP4, touch-friendly), ArtPlayer (HLS/DASH/MP4, subtitle offset and size, screenshot, phone gestures) and Vidstack — which load the whole video while you watch (then save it without downloading again), with subtitles and resume.
 - **Download**: save HLS / DASH / MP4 as one MP4 file in the browser (desktop and Android), or with yt-dlp / ffmpeg through the native host (desktop).
 
 ### **Platform Support**
@@ -162,7 +163,7 @@ In the popup you can set the player path, an argument template and a download fo
   - For **VLC HTTP Interface**, verify the password in settings.
 
 - **In-Browser Playback**:
-  - Ensure **Shaka Player/Vidstack** is enabled in settings.
+  - Try another built-in player (Shaka Player / ArtPlayer / Vidstack) in settings.
   - Check for **CORS errors** in the browser console.
 
 ## License

@@ -45,7 +45,7 @@ Videos can be on any website and are usually served from separate video servers 
 ==================================================
 REMOTE CODE
 ==================================================
-No, the extension does not use remote code. All JavaScript, including the video players (Shaka Player, Vidstack, hls.js), is bundled in the package. The only things fetched from the network are the video streams, playlists and subtitle files the user's pages already use.
+No, the extension does not use remote code. All JavaScript, including the video players (Shaka Player, ArtPlayer, Vidstack, hls.js), is bundled in the package. The only things fetched from the network are the video streams, playlists and subtitle files the user's pages already use.
 
 ==================================================
 DATA USAGE
