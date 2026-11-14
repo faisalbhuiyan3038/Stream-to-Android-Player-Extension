@@ -23,6 +23,7 @@ const EXTENSION_FILES = [
   'download.html',
   'download.css',
   'download.bundle.js',
+  'timer-worker.js',
   'icons',
   'LICENSE.md'
 ];

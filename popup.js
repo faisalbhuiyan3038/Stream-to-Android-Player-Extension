@@ -30,6 +30,8 @@ const defaults = {
   fastBuffering: true,
   fastBufferingParallel: 4,
   bufferAheadSeconds: 0,
+  cacheWholeVideo: true,
+  cacheLimitGB: 0,
   downloadMethod: 'browser'
 };
 
@@ -62,6 +64,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('toggle-open-mp4-links').checked = !!settings.openMp4Links;
   document.getElementById('toggle-open-stream-links').addEventListener('change', e => saveSettings({ openStreamLinks: e.target.checked }));
   document.getElementById('toggle-open-mp4-links').addEventListener('change', e => saveSettings({ openMp4Links: e.target.checked }));
+  const cacheToggle = document.getElementById('toggle-cache-whole-video');
+  const cacheOptions = document.getElementById('cache-options');
+  cacheToggle.checked = settings.cacheWholeVideo !== false;
+  cacheOptions.style.display = cacheToggle.checked ? '' : 'none';
+  document.getElementById('cache-limit').value = String(settings.cacheLimitGB || 0);
+  cacheToggle.addEventListener('change', e => {
+    cacheOptions.style.display = e.target.checked ? '' : 'none';
+    saveSettings({ cacheWholeVideo: e.target.checked });
+  });
+  document.getElementById('cache-limit').addEventListener('change', e => saveSettings({ cacheLimitGB: parseInt(e.target.value, 10) }));
   const fastToggle = document.getElementById('toggle-fast-buffering');
   const fastOptions = document.getElementById('fast-buffering-options');
   fastToggle.checked = settings.fastBuffering !== false;

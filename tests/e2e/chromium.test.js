@@ -61,6 +61,7 @@ before(async () => {
   profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sap-e2e-'));
   const headless = process.env.HEADLESS === '1';
   ctx = await chromium.launchPersistentContext(profileDir, {
+    executablePath: process.env.CHROMIUM_BIN || undefined, // a preinstalled Chromium when Playwright's own is missing
     channel: headless ? 'chromium' : undefined,
     headless,
     permissions: ['clipboard-read', 'clipboard-write'],
@@ -557,7 +558,8 @@ function maxConcurrent(segments) {
 
 // Opens a player on the throttled HLS fixture and measures how long 20 s of video take to buffer
 async function bufferRun(file, enabled) {
-  await setSettings({ fastBuffering: enabled, fastBufferingParallel: 4, bufferAheadSeconds: 60 });
+  // the prefetcher path (with the whole-video download off)
+  await setSettings({ fastBuffering: enabled, fastBufferingParallel: 4, bufferAheadSeconds: 60, cacheWholeVideo: false });
   site.log.segments.length = 0;
   const page = await ctx.newPage();
   const t0 = Date.now();
@@ -592,7 +594,7 @@ test('faster buffering: Shaka prefetches segments in parallel', async (t) => {
   assert.ok(on.conc > off.conc, `no extra parallelism: on ${on.conc}, off ${off.conc}`);
   assert.ok(on.playable, 'video not playable');
   assert.ok(on.ms < off.ms, `not faster: on ${on.ms} ms vs off ${off.ms} ms`);
-  await setSettings({ fastBuffering: true, bufferAheadSeconds: 0 });
+  await setSettings({ fastBuffering: true, bufferAheadSeconds: 0, cacheWholeVideo: true });
 });
 
 // ── phase 7: download to MP4 in the browser ──────────────────────────────────
@@ -816,6 +818,140 @@ test('⬇️ in the page menu opens the downloader with the stream and its clean
   assert.equal(params.get('title'), 'Test Clip E02');
   await dl.close();
   await page.close();
+});
+
+// ── whole-video download while watching (src/stream-cache.mjs) ──────────────
+
+const BIG = `${ORIGIN}/big-hls/index.m3u8`; // 60 segments, ~61 MB, 2 min
+
+// Opens a player page, pauses it once it plays, waits until its cache has every segment
+async function cacheRun(file, url, { timeout = 90000, title = 'Whole Video' } = {}) {
+  const page = await ctx.newPage();
+  await page.goto(`chrome-extension://${extId}/${file}?url=${encodeURIComponent(url)}&title=${encodeURIComponent(title)}`);
+  await until(() => page.evaluate(() => { const v = document.querySelector('video'); return v && v.currentTime > 0.2; }), { timeout: 20000 });
+  // Paused, the player buffers no further; the download must carry on to the end anyway
+  await page.evaluate(() => document.querySelector('video').pause());
+  const progress = await until(() => page.evaluate(() => window._cache && window._cache.progress().complete && window._cache.progress()), { timeout });
+  // the badge follows within half a second
+  await until(() => page.evaluate(() => { const b = document.querySelector('.sap-cache'); return !b || b.dataset.state === 'complete'; }), { timeout: 3000 });
+  const info = await page.evaluate(() => {
+    const v = document.querySelector('video');
+    return {
+      buffered: v.buffered.length ? v.buffered.end(v.buffered.length - 1) : 0,
+      stats: window._cache.stats,
+      badge: (document.querySelector('.sap-cache') || {}).textContent || '',
+      badgeState: (document.querySelector('.sap-cache') || { dataset: {} }).dataset.state
+    };
+  });
+  return { page, progress, ...info };
+}
+
+// Presses the badge's Save button; returns the download page's result and the saved file
+async function saveFromBadge(page) {
+  await page.evaluate(() => { const b = document.querySelector('.sap-cache button'); b.closest('.sap-cache').classList.remove('sap-hidden'); });
+  const [dlPage] = await Promise.all([ctx.waitForEvent('page', { timeout: 15000 }), page.click('.sap-cache button')]);
+  const download = await dlPage.waitForEvent('download', { timeout: 60000 });
+  const file = path.join(os.tmpdir(), `sap-cache-${Date.now()}-${download.suggestedFilename()}`);
+  await download.saveAs(file);
+  const state = await dlPage.evaluate(() => window._download);
+  const data = fs.readFileSync(file);
+  fs.rmSync(file, { force: true });
+  return { dlPage, state, data, name: download.suggestedFilename() };
+}
+
+for (const [name, file] of [['Vidstack/hls.js', 'player.html'], ['Shaka', 'player-shaka.html']]) {
+  test(`whole video (${name}): downloads to the end while paused, each segment once; Save needs no second download`, async (t) => {
+    await setSettings({ cacheWholeVideo: true, cacheLimitGB: 0, bufferAheadSeconds: 10, fastBufferingParallel: 4 });
+    site.log.big.length = 0;
+    const run = await cacheRun(file, BIG);
+    t.diagnostic(`${name}: ${JSON.stringify({ progress: run.progress, buffered: run.buffered, stats: run.stats, badge: run.badge })}`);
+    assert.equal(run.progress.total, 61, 'init + 60 segments planned');
+    assert.ok(run.buffered < 60, `the player itself buffered only a window (${run.buffered} s)`);
+    const counts = {};
+    for (const u of site.log.big) counts[u] = (counts[u] || 0) + 1;
+    assert.equal(Object.keys(counts).length, 60, 'every segment fetched');
+    assert.ok(Object.values(counts).every(n => n === 1), `a segment was fetched twice: ${JSON.stringify(Object.entries(counts).filter(([, n]) => n > 1))}`);
+    assert.equal(run.badgeState, 'complete');
+    assert.match(run.badge, /Whole video loaded/);
+
+    site.log.big.length = 0;
+    const saved = await saveFromBadge(run.page);
+    t.diagnostic(`save: ${JSON.stringify({ name: saved.name, size: saved.data.length, fromCache: saved.state.fromCache, fromNetwork: saved.state.fromNetwork })}`);
+    assert.equal(saved.state.state, 'done');
+    assert.equal(saved.name, 'Whole Video.mp4');
+    assert.equal(site.log.big.length, 0, 'Save downloaded segments again');
+    assert.equal(saved.state.fromCache, 61);
+    assert.equal(saved.state.fromNetwork, 0);
+    assert.deepEqual(boxTypes(saved.data).slice(0, 3), ['ftyp', 'moov', 'sidx']);
+    assert.ok(Math.abs(saved.state.duration - 120) < 3, `duration ${saved.state.duration}`);
+    await saved.dlPage.close();
+    await run.page.close();
+  });
+}
+
+test('whole video: an unreliable server (503 / 429 on every segment) is retried until everything is in', async (t) => {
+  await setSettings({ cacheWholeVideo: true, bufferAheadSeconds: 10 });
+  site.log.flaky = {};
+  const run = await cacheRun('player.html', `${ORIGIN}/flaky-hls/index.m3u8`, { timeout: 120000 });
+  t.diagnostic(JSON.stringify({ progress: run.progress, stats: run.stats }));
+  assert.equal(run.progress.total, 13);
+  assert.ok(run.stats.failures > 0, 'the server never failed?');
+  assert.equal(await run.page.evaluate(() => { const v = document.querySelector('video'); return !v.error; }), true);
+  await run.page.close();
+});
+
+for (const [name, file] of [['Vidstack', 'player.html'], ['Shaka', 'player-shaka.html']]) {
+  test(`whole video (${name}): a plain file is cached as byte ranges, then plays from the local copy and saves as it is`, async () => {
+    await setSettings({ cacheWholeVideo: true, bufferAheadSeconds: 0 });
+    const run = await cacheRun(file, `${ORIGIN}/media/real.webm`, { title: 'Clip' });
+    await until(() => run.page.evaluate(() => window._playingLocalCopy === true), { timeout: 10000 });
+    const local = await run.page.evaluate(async () => {
+      const v = document.querySelector('video');
+      const t0 = v.currentTime;
+      await v.play().catch(() => {});
+      await new Promise(r => setTimeout(r, 1200));
+      return { src: v.currentSrc.slice(0, 5), advanced: v.currentTime > t0, error: v.error && v.error.code };
+    });
+    assert.deepEqual(local, { src: 'blob:', advanced: true, error: null });
+    await run.page.evaluate(() => document.querySelector('video').pause());
+    await run.page.evaluate(() => document.querySelector('.sap-cache').classList.remove('sap-hidden'));
+    const [download] = await Promise.all([run.page.waitForEvent('download', { timeout: 15000 }), run.page.click('.sap-cache button')]);
+    const out = path.join(os.tmpdir(), `sap-file-${Date.now()}.webm`);
+    await download.saveAs(out);
+    assert.equal(download.suggestedFilename(), 'Clip.webm');
+    assert.ok(fs.readFileSync(out).equals(fs.readFileSync(path.join(__dirname, 'fixtures', 'clip.webm'))), 'saved file differs from the original');
+    fs.rmSync(out, { force: true });
+    await run.page.close();
+  });
+}
+
+for (const [name, file] of [['Vidstack/hls.js', 'player.html'], ['Shaka', 'player-shaka.html']]) {
+  test(`whole video (${name}): one quality (closest to the screen) is played and downloaded; Save preselects it`, async (t) => {
+    await setSettings({ cacheWholeVideo: true, bufferAheadSeconds: 10 });
+    // the 720 px window asks for ~790 px: 720p, not 360p
+    const run = await cacheRun(file, `${ORIGIN}/multi-hls/master.m3u8`, { title: 'Two Qualities' });
+    const urls = await run.page.evaluate(() => window._cache.plan.map(i => i.url));
+    t.diagnostic(JSON.stringify({ progress: run.progress, sample: urls.slice(0, 3) }));
+    assert.equal(urls.length, 13);
+    assert.ok(urls.filter(u => u.includes('.m4s')).every(u => u.endsWith('?q=high')), `not all 720p: ${urls}`);
+    const saved = await saveFromBadge(run.page);
+    const chosen = await saved.dlPage.evaluate(() => document.getElementById('quality').selectedOptions[0].textContent);
+    assert.match(chosen, /^720p/);
+    assert.equal(saved.state.fromNetwork, 0);
+    await saved.dlPage.close();
+    await run.page.close();
+  });
+}
+
+test('whole video: off in the settings means no cache (and no badge)', async () => {
+  await setSettings({ cacheWholeVideo: false });
+  const page = await ctx.newPage();
+  await page.goto(`chrome-extension://${extId}/player.html?url=${encodeURIComponent(`${ORIGIN}/hls-real/index.m3u8`)}`);
+  await until(() => page.evaluate(() => { const v = document.querySelector('video'); return v && v.currentTime > 0.2; }), { timeout: 20000 });
+  assert.equal(await page.evaluate(() => window._cache), null);
+  assert.equal(await page.$('.sap-cache'), null);
+  await page.close();
+  await setSettings({ cacheWholeVideo: true, bufferAheadSeconds: 0 });
 });
 
 // ── settings ─────────────────────────────────────────────────────────────────

@@ -54,6 +54,7 @@ async function main() {
   const ext = stageExtension('chrome');
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'sap-mobile-profile-'));
   const ctx = await chromium.launchPersistentContext(profile, {
+    executablePath: process.env.CHROMIUM_BIN || undefined, // a preinstalled Chromium when Playwright's own is missing
     headless: false, ...PHONE,
     args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`]
   });

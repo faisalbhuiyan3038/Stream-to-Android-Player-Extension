@@ -6,6 +6,8 @@
 A browser extension to detect streaming videos (HLS, DASH, MP4) and send them to your preferred media player on Android and desktop, play them in a built-in player, or save them as MP4. Supports VLC, MPV, MX Player and other players.
 
 ## Changelog
+### Next (not released yet)
+- **The whole video loads while you watch** (like FastStream): both built-in players keep downloading every segment of the playing quality to the end, several at a time, also while paused or in a background tab, and keep retrying when the server fails or rate-limits (it never gives up on a segment). The player is served from that copy, so it stops waiting on the network. A badge shows the progress and then **Save**: the MP4 is built from what is already downloaded, with no second download. Plain MP4/WebM files switch to the local copy once complete and are saved as they are. Works for HLS, DASH and plain files, for films and series episodes. Settings: on/off, storage limit (automatic: 8 GB, 3 GB on phones; longer videos keep a window ahead of where you are). With it on, one quality is played and downloaded: the one closest to your screen, or the one you picked last time (the quality menu still changes it).
 ### 1.6
 - **Download as MP4, no setup**: the ⬇️ button (now on by default, also on Android) opens a downloader that saves HLS (incl. MPEG-TS, separate audio tracks and AES-128 encryption), DASH and plain files as one MP4 that VLC, MX Player, mpv and browsers can open and seek. Pick the quality and audio language first. The page's subtitles (and subtitle tracks listed in the stream) are put into the MP4 as subtitle tracks, and can also be saved as `.srt` files next to it. yt-dlp/ffmpeg through the native host is still available on desktop.
 - **Faster buffering** in the built-in players: upcoming segments are downloaded several at a time (it ramps up only while that helps), so slow servers start and seek much faster. Settings: on/off, parallel downloads, how far ahead to buffer.
@@ -65,7 +67,7 @@ A browser extension to detect streaming videos (HLS, DASH, MP4) and send them to
   - **Native Messaging** (browser-to-app communication).
   - **Protocol Handlers** (e.g., `vlc://`, `mpv://`).
   - **VLC HTTP Interface** (remote control).
-- **In-Browser Playback**: Shaka Player (HLS/DASH/MP4, touch-friendly) and Vidstack, with faster buffering, subtitles and resume.
+- **In-Browser Playback**: Shaka Player (HLS/DASH/MP4, touch-friendly) and Vidstack, which load the whole video while you watch (then save it without downloading again), with subtitles and resume.
 - **Download**: save HLS / DASH / MP4 as one MP4 file in the browser (desktop and Android), or with yt-dlp / ffmpeg through the native host (desktop).
 
 ### **Platform Support**

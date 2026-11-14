@@ -7,7 +7,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..', '..');
 const FILES = ['background.js', 'content.js', 'shared.js', 'popup.html', 'popup.css', 'popup.js', 'styles.css',
   'player.html', 'player.bundle.css', 'player.bundle.js', 'player-shaka.html', 'player-shaka.bundle.js',
-  'player-shaka.bundle.css', 'player-common.css', 'download.html', 'download.css', 'download.bundle.js'];
+  'player-shaka.bundle.css', 'player-common.css', 'download.html', 'download.css', 'download.bundle.js', 'timer-worker.js'];
 
 // `edit(manifest, dir)` may change the manifest or the staged files before the manifest is written.
 function stageExtension(target, edit) {

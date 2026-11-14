@@ -6,6 +6,11 @@ import { loadSubtitleAsVtt } from './subtitles.mjs';
 import { getVideoUrl, getSubtitleList, getTitle } from './page-params.mjs';
 import { attachPlaybackMemory, createMemory, closestHeight, makeToast } from './player-memory.mjs';
 import { bufferingSettings } from './prefetch.mjs';
+import { openPlayerCache } from './stream-cache.mjs';
+import { registerCacheScheme, shakaPlan, pickVariant } from './cache-shaka.mjs';
+import { desiredHeight } from './cache-hls.mjs';
+import { createCacheBadge, throttle } from './cache-ui.mjs';
+import { startFileCache, onComplete, saveStreamFromCache, saveFileFromCache } from './player-cache.mjs';
 
 async function readSettings() {
   try {
@@ -90,9 +95,21 @@ function syncNativeTracks(player) {
 
 // Remembered quality: when the user picks a quality in the menu (ABR off), the height is saved
 // and applied to the next video (closest available height).
-function applyPreferredQuality(player) {
+// With the whole-video download on, one quality is played and downloaded (FastStream does the
+// same): the remembered one, else the one closest to the screen's height.
+let autoPickUntil = 0;
+function applyPreferredQuality(player, { wholeVideo = false } = {}) {
   const preferred = memory.preferredHeight();
   const variants = player.getVariantTracks().filter(v => v.height);
+  if (wholeVideo) {
+    const pick = pickVariant(variants, desiredHeight(preferred));
+    player.configure({ abr: { enabled: false } });
+    if (pick && !pick.active) {
+      autoPickUntil = Date.now() + 1500; // not a choice of the user's
+      player.selectVariantTrack(pick, true);
+    }
+    return;
+  }
   const height = closestHeight([...new Set(variants.map(v => v.height))], preferred);
   if (!height) return;
   const pick = variants.filter(v => v.height === height).sort((a, b) => b.bandwidth - a.bandwidth)[0];
@@ -102,6 +119,7 @@ function applyPreferredQuality(player) {
 function watchQualityChoice(player) {
   player.addEventListener('variantchanged', () => {
     if (player.getConfiguration().abr.enabled) return; // automatic switches are not a preference
+    if (Date.now() < autoPickUntil) return;
     const active = player.getVariantTracks().find(v => v.active);
     if (active && active.height) memory.setPreferredHeight(active.height);
   });
@@ -158,13 +176,29 @@ async function init() {
 
   // "Faster buffering": Shaka has parallel segment prefetch built in (segmentPrefetchLimit
   // segments per stream ahead of the playhead) and a configurable buffer depth.
-  const buffering = bufferingSettings(await readSettings(), { mobile: isMobile() });
+  const mobile = isMobile();
+  const buffering = bufferingSettings(await readSettings(), { mobile });
   window._buffering = buffering; // read by the browser tests
+
+  // Whole-video download while watching (FastStream-style, src/stream-cache.mjs): every segment
+  // of the playing variant goes to IndexedDB, and Shaka's segment requests are served from there.
+  let cache = null;
+  let badge = null;
+  if (buffering.wholeVideo) {
+    const update = throttle(c => { if (badge) badge.update(c.progress()); }, 500);
+    cache = await openPlayerCache({ maxBytes: buffering.cacheBytes, parallel: buffering.parallel, mobile, onChange: update })
+      .catch((e) => { console.warn('Whole-video download unavailable:', e); return null; });
+    if (cache) registerCacheScheme(shaka, () => cache);
+  }
+  window._cache = cache;
+
   player.configure({
     streaming: {
-      retryParameters: { maxAttempts: 4, baseDelay: 100, backoffFactor: 2, fuzzFactor: 0.5, timeout: 0 },
-      ...(buffering.enabled ? {
-        segmentPrefetchLimit: buffering.parallel,
+      // Shaka keeps retrying a segment on its own as well (the cache retries without limit)
+      retryParameters: { maxAttempts: cache ? 8 : 4, baseDelay: cache ? 500 : 100, backoffFactor: 2, fuzzFactor: 0.5, timeout: 0 },
+      ...(buffering.enabled || cache ? {
+        // the cache downloads in parallel itself; Shaka's prefetch would only ask it twice
+        segmentPrefetchLimit: cache ? 0 : buffering.parallel,
         bufferingGoal: buffering.bufferAhead,
         bufferBehind: 30
       } : {})
@@ -182,16 +216,93 @@ async function init() {
     setRate: r => { try { if (r === 1) player.cancelTrickPlay(); else player.trickPlay(r, false); } catch { video.playbackRate = r; } }
   });
 
+  let subtitlesLoaded = Promise.resolve();
   try {
     await player.load(videoUrl);
     playback.applyRate(); // Shaka sets the rate to 1 during load
-    applyPreferredQuality(player);
+    applyPreferredQuality(player, { wholeVideo: !!cache });
     watchQualityChoice(player);
-    await addSubtitles(player);
+    if (cache) startCache();
+    subtitlesLoaded = addSubtitles(player);
+    await subtitlesLoaded;
     video.play().catch(e => console.log('Autoplay blocked:', e.message));
   } catch (e) {
     console.error('Failed to load stream:', e);
     errorEl.textContent = `Failed to load: ${e.message || JSON.stringify(e)}`;
+  }
+
+  // The download follows the playing variant (a quality or language change starts on the new
+  // one; what is already in stays).
+  function startCache() {
+    let filePlan = null;
+    badge = createCacheBadge(container, video, {
+      onSave: async (button) => {
+        button.disabled = true;
+        try {
+          if (filePlan) {
+            toast(`Saved ${await saveFileFromCache(cache, filePlan, { url: videoUrl, title })}`);
+          } else {
+            const active = player.getVariantTracks().find(t => t.active) || {};
+            await saveStreamFromCache(cache, {
+              url: videoUrl,
+              title,
+              choice: { height: active.height, bandwidth: active.videoBandwidth || active.bandwidth, audioLanguage: active.language }
+            });
+          }
+        } catch (e) {
+          toast(`Could not save: ${e.message || e}`);
+        } finally {
+          button.disabled = false;
+        }
+      }
+    });
+    badge.update(cache.progress());
+
+    if (!player.getManifest()) {
+      // A plain file (Shaka's src= mode): cached as byte ranges; once all of it is in, Shaka
+      // reloads the local copy at the same position, so nothing depends on the network any more.
+      startFileCache(cache, video, videoUrl).then((plan) => {
+        filePlan = plan;
+        window._filePlan = plan;
+        if (!plan) {
+          badge.destroy();
+          badge = null;
+          return;
+        }
+        onComplete(cache, async () => {
+          await subtitlesLoaded.catch(() => {}); // a reload in the middle would add them twice
+          const blob = await cache.assemble(plan.type);
+          if (!blob) return;
+          const at = video.currentTime;
+          const paused = video.paused;
+          const selected = (player.getTextTracks().find(t => t.active) || {}).label;
+          await player.load(URL.createObjectURL(blob), at, plan.type || 'video/mp4');
+          window._subtitleStatus = [];
+          await addSubtitles(player);
+          const again = player.getTextTracks().find(t => t.label === selected);
+          if (selected != null && again) player.selectTextTrack(again);
+          if (!paused) video.play().catch(() => {});
+          window._playingLocalCopy = true;
+        });
+      });
+      return;
+    }
+
+    let generation = 0;
+    const replan = async () => {
+      const mine = ++generation;
+      try {
+        const plan = await shakaPlan(shaka, player);
+        if (mine === generation) cache.setPlan(plan);
+      } catch (e) {
+        console.warn('[cache] could not list the segments:', e);
+      }
+    };
+    for (const ev of ['variantchanged', 'adaptation', 'trackschanged']) player.addEventListener(ev, replan);
+    replan();
+    const onTime = () => cache.setPosition(video.currentTime);
+    video.addEventListener('timeupdate', onTime);
+    video.addEventListener('seeking', onTime);
   }
 }
 

@@ -207,8 +207,13 @@ export function bufferingSettings(settings = {}, { mobile = false } = {}) {
   const enabled = settings.fastBuffering !== false;
   const parallel = Math.min(8, Math.max(1, Number(settings.fastBufferingParallel) || 4));
   const ahead = Math.min(600, Math.max(10, Number(settings.bufferAheadSeconds) || (mobile ? 60 : 120)));
+  // Whole-video download while watching (src/stream-cache.mjs), on by default; limit in GB
+  const wholeVideo = settings.cacheWholeVideo !== false;
+  const limitGB = Number(settings.cacheLimitGB) > 0 ? Number(settings.cacheLimitGB) : (mobile ? 3 : 8);
   return {
     enabled,
+    wholeVideo,
+    cacheBytes: limitGB * 1024 * 1024 * 1024,
     parallel,
     bufferAhead: ahead,
     prefetchBytes: (mobile ? 24 : 64) * 1024 * 1024,

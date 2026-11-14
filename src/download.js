@@ -5,7 +5,9 @@ import { getVideoUrl, getTitle, getSubtitleList } from './page-params.mjs';
 import { describeManifest, downloadManifest, downloadFile, safeFileName, textStreamsOf, loadTextStream, segmentUrisOf } from './downloader.mjs';
 import { loadSubtitleAsVtt, parseVttCues, cuesToSrt } from './subtitles.mjs';
 import { bufferingSettings } from './prefetch.mjs';
-import { openStore, removeLeftoverStores } from './segment-store.mjs';
+import { openStore, removeLeftoverStores, IdbStore } from './segment-store.mjs';
+import { segmentKey, parseRange } from './stream-cache.mjs';
+import { registerCacheScheme } from './cache-shaka.mjs';
 
 const $ = id => document.getElementById(id);
 const url = getVideoUrl(window.location);
@@ -14,7 +16,36 @@ const mobile = /Android|Mobile/i.test(navigator.userAgent) || matchMedia('(point
 const PHONE_WARN_BYTES = 500 * 1024 * 1024;
 
 // Read by the browser tests
-const state = window._download = { state: 'starting', error: null, size: 0, duration: 0, tracks: [], name: '', subtitles: [], subtitleErrors: [] };
+const state = window._download = { state: 'starting', error: null, size: 0, duration: 0, tracks: [], name: '', subtitles: [], subtitleErrors: [], fromCache: 0, fromNetwork: 0 };
+
+// "Save" in a player: the segments it already downloaded wait in its cache database
+// (src/stream-cache.mjs); they are read from there, anything missing comes from the network.
+// The player also says what it plays (vh/vbw/alang), which is preselected, and the download starts
+// at once (autostart).
+const params = new URLSearchParams(window.location.search);
+let cacheStore = null;
+const cacheReady = params.get('cache')
+  ? IdbStore.openExisting(params.get('cache')).then((s) => { cacheStore = s; state.cache = s.name; }).catch(() => { state.cache = null; })
+  : Promise.resolve();
+
+// Shaka reads the stream here too (to list qualities, it buffers a second): from the cache as well
+registerCacheScheme(shaka, () => cacheStore && {
+  get: (u, start, end) => cacheStore.get(segmentKey(u, start, end)).then(b => b.arrayBuffer()),
+  put: () => {}
+});
+
+async function cachedFetch(u, init = {}) {
+  if (cacheStore) {
+    const { start, end } = parseRange(init.headers && (init.headers.Range || init.headers.range));
+    try {
+      const blob = await cacheStore.get(segmentKey(u, start, end));
+      state.fromCache++;
+      return new Response(blob, { status: 200 });
+    } catch { /* not in the cache */ }
+  }
+  state.fromNetwork++;
+  return globalThis.fetch(u, init);
+}
 
 function setStatus(text, kind = '') {
   $('status').textContent = text;
@@ -110,7 +141,7 @@ async function loadChosenSubtitles({ signal, parallel }) {
       let cues;
       let base = 'output';
       if (c.source === 'manifest') {
-        ({ cues, base } = await loadTextStream(c.stream, { signal, parallel }));
+        ({ cues, base } = await loadTextStream(c.stream, { signal, parallel, fetchFn: cachedFetch }));
       } else {
         cues = parseVttCues((await loadSubtitleAsVtt(c.sub)).vtt);
       }
@@ -159,6 +190,7 @@ let storageKind = 'indexeddb';
 async function main() {
   // Open the segment storage up front, so the size warning knows where segments will wait
   storageKind = (await getStore()).kind;
+  await cacheReady;
   if (!url) return fail(new Error('No video URL given.'));
   $('source').textContent = url;
   const settings = await readSettings();
@@ -242,6 +274,18 @@ async function main() {
   const lang = (navigator.language || '').split('-')[0];
   const preferred = info.audios.find(a => a.language && a.language.split('-')[0] === lang);
   if (preferred) audioSel.value = String(preferred.id);
+  // What the player was playing (and has in its cache)
+  const vh = Number(params.get('vh')) || 0;
+  if (vh) {
+    const vbw = Number(params.get('vbw')) || 0;
+    const same = info.videos.filter(v => v.height === vh).sort((a, b) => Math.abs(a.bandwidth - vbw) - Math.abs(b.bandwidth - vbw));
+    if (same.length) quality.value = String(same[0].id);
+  }
+  const alang = params.get('alang');
+  if (alang) {
+    const a = info.audios.find(x => x.language === alang) || info.audios.find(x => x.language && x.language.split('-')[0] === alang.split('-')[0]);
+    if (a) audioSel.value = String(a.id);
+  }
   $('quality-field').hidden = info.videos.length === 0;
   $('audio-field').hidden = info.audios.length === 0;
   $('choices').hidden = false;
@@ -281,6 +325,7 @@ async function main() {
   setStatus('Ready.');
   state.state = 'ready';
   $('start').disabled = false;
+  if (params.get('autostart') === '1') setTimeout(() => $('start').click(), 0);
   $('start').onclick = async () => {
     controller = new AbortController();
     $('start').disabled = true;
@@ -299,7 +344,7 @@ async function main() {
       const result = await downloadManifest({
         text,
         store: await getStore(),
-        shaka, manifest, parallel, signal: controller.signal,
+        shaka, manifest, parallel, signal: controller.signal, fetchFn: cachedFetch,
         choice: {
           videoId: info.videos.length ? Number(quality.value) : null,
           audioId: info.audios.length ? Number(audioSel.value) : null

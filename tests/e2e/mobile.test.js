@@ -32,6 +32,7 @@ before(async () => {
   EXT = stageExtension('chrome');
   profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sap-mobile-e2e-'));
   ctx = await chromium.launchPersistentContext(profileDir, {
+    executablePath: process.env.CHROMIUM_BIN || undefined, // a preinstalled Chromium when Playwright's own is missing
     headless: process.env.HEADLESS === '1',
     ...PHONE,
     args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--autoplay-policy=no-user-gesture-required']

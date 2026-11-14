@@ -83,6 +83,8 @@ let settings = {
   fastBuffering: true,    // built-in players: parallel segment downloads + deeper buffer (src/prefetch.mjs)
   fastBufferingParallel: 4,
   bufferAheadSeconds: 0,  // 0 = automatic (120 s desktop, 60 s phone)
+  cacheWholeVideo: true,  // built-in players: download the whole video while watching (src/stream-cache.mjs)
+  cacheLimitGB: 0,        // 0 = automatic (8 GB desktop, 3 GB phone)
   downloadMethod: 'browser' // ⬇️: 'browser' = built-in MP4 downloader (download.html), 'native' = yt-dlp/ffmpeg via the native host
 };
 
@@ -1073,6 +1075,30 @@ async function openDownloadPage(ctx) {
   return { success: true };
 }
 
+// "Save" in a built-in player once the whole video is in its cache: the download page reads the
+// player's cache database (`cache`), preselects what was playing and starts by itself. It gets
+// the player tab's Referer/Origin/Cookie rule, so anything not cached can still be fetched.
+async function saveFromPlayer(playerTabId, m) {
+  const ctx = {};
+  try {
+    const rules = await browser.declarativeNetRequest.getSessionRules();
+    const rule = rules.find(r => r.id === playerTabId + 1);
+    for (const h of (rule && rule.action && rule.action.requestHeaders) || []) {
+      const name = String(h.header).toLowerCase();
+      if (name === 'referer') ctx.referer = h.value;
+      else if (name === 'origin') ctx.origin = h.value;
+      else if (name === 'cookie') ctx.cookie = h.value;
+    }
+  } catch { /* no rule: nothing to forward */ }
+  const params = new URLSearchParams({ url: String(m.url) });
+  for (const key of ['title', 'subs', 'cache', 'vh', 'vbw', 'alang']) {
+    if (m[key] != null && m[key] !== '') params.set(key, String(m[key]));
+  }
+  params.set('autostart', '1');
+  await openExtensionTab('download.html', params, ctx);
+  return { success: true };
+}
+
 // ─── External player / download ──────────────────────────────────────────────
 
 // Argument presets for known players. A token is dropped when one of its
@@ -1280,6 +1306,13 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     buildContext(tabId, message.url, message.streamUrl)
       .then(ctx => runAction('download', ctx))
       .then(res => sendResponse(res));
+    return true;
+  } else if (message.type === 'saveFromPlayer') {
+    // Only from our own player pages
+    const ours = sender.tab && sender.url && sender.url.startsWith(browser.runtime.getURL(''));
+    if (!ours || !message.url) return false;
+    saveFromPlayer(sender.tab.id, message)
+      .then(res => sendResponse(res), e => sendResponse({ success: false, error: e.message }));
     return true;
   } else if (message.type === 'nativePing') {
     nativeSend({ action: 'ping' }).then(res => sendResponse(res));

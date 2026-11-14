@@ -20,12 +20,35 @@ export class IdbStore {
     this.kind = 'indexeddb';
   }
 
-  static async open(idb = globalThis.indexedDB) {
+  static async open(idb = globalThis.indexedDB, { prefix = PREFIX } = {}) {
     if (!idb) throw new Error('IndexedDB is not available');
-    const name = PREFIX + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    const name = prefix + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
     const open = idb.open(name, 1);
     open.onupgradeneeded = () => open.result.createObjectStore('segments');
     const db = await req(open);
+    const store = new IdbStore(db, name);
+    store.idb = idb;
+    return store;
+  }
+
+  // A database another page of the extension created (the player's whole-video cache, read by the
+  // download page). Rejects if it does not exist (any more): nothing is created.
+  static async openExisting(name, idb = globalThis.indexedDB) {
+    if (!idb) throw new Error('IndexedDB is not available');
+    const open = idb.open(name);
+    let created = false;
+    open.onupgradeneeded = () => { created = true; open.transaction.abort(); };
+    let db;
+    try {
+      db = await req(open);
+    } catch (e) {
+      if (created) idb.deleteDatabase(name);
+      throw new Error(`storage ${name} does not exist`);
+    }
+    if (!db.objectStoreNames.contains('segments')) {
+      db.close();
+      throw new Error(`storage ${name} does not exist`);
+    }
     const store = new IdbStore(db, name);
     store.idb = idb;
     return store;
@@ -86,9 +109,9 @@ export class MemoryStore {
 }
 
 // IndexedDB if possible, memory otherwise
-export async function openStore(idb = globalThis.indexedDB) {
+export async function openStore(idb = globalThis.indexedDB, options = {}) {
   try {
-    return await IdbStore.open(idb);
+    return await IdbStore.open(idb, options);
   } catch (e) {
     console.warn('Download storage falls back to memory:', e && e.message);
     return new MemoryStore();
@@ -97,13 +120,15 @@ export async function openStore(idb = globalThis.indexedDB) {
 
 // Databases left behind by downloads whose tab was closed or crashed. Only ones older than
 // `minAgeMs` go: a download running in another tab right now must keep its data.
-export async function removeLeftoverStores(idb = globalThis.indexedDB, { minAgeMs = 12 * 3600 * 1000, now = Date.now() } = {}) {
+// `inUse(name)`: databases a live page still says it uses (see stream-cache.mjs) are kept whatever
+// their age.
+export async function removeLeftoverStores(idb = globalThis.indexedDB, { minAgeMs = 12 * 3600 * 1000, now = Date.now(), prefix = PREFIX, inUse = () => false } = {}) {
   if (!idb || typeof idb.databases !== 'function') return 0;
   let removed = 0;
   for (const { name } of await idb.databases()) {
-    if (!name || !name.startsWith(PREFIX)) continue;
-    const created = parseInt(name.slice(PREFIX.length), 10);
-    if (!(created > 0) || now - created < minAgeMs) continue;
+    if (!name || !name.startsWith(prefix)) continue;
+    const created = parseInt(name.slice(prefix.length), 10);
+    if (!(created > 0) || now - created < minAgeMs || inUse(name)) continue;
     await new Promise(resolve => {
       const r = idb.deleteDatabase(name);
       r.onsuccess = r.onerror = r.onblocked = () => resolve();

@@ -75,6 +75,32 @@
       </label>
     </div>
 
+    <!-- Whole-video download while watching (built-in players, src/stream-cache.mjs) -->
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-title">Load the whole video while watching</span>
+        <span class="setting-desc">The browser player keeps downloading to the end (also in the background) and retries until it has everything; then Save needs no second download</span>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="toggle-cache-whole-video" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div id="cache-options" class="setting-row column">
+      <div class="setting-label">
+        <span class="setting-title">Storage limit</span>
+        <span class="setting-desc">Longer videos keep only a window ahead of where you are</span>
+      </div>
+      <select id="cache-limit" class="select-dropdown">
+        <option value="0">Automatic (8 GB, 3 GB on phones)</option>
+        <option value="1">1 GB</option>
+        <option value="2">2 GB</option>
+        <option value="4">4 GB</option>
+        <option value="8">8 GB</option>
+        <option value="16">16 GB</option>
+      </select>
+    </div>
+
     <!-- Faster buffering (built-in players) -->
     <div class="setting-row">
       <div class="setting-label">

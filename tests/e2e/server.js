@@ -14,7 +14,7 @@ function page(title, body) {
 }
 
 function startServer() {
-  const log = { secureReferers: [], cookies: [], segments: [] };
+  const log = { secureReferers: [], cookies: [], segments: [], big: [], flaky: {} };
   const server = http.createServer((req, res) => {
     const url = req.url.split('?')[0];
     const send = (status, type, body, extra = {}) => {
@@ -78,6 +78,36 @@ function startServer() {
       return send(200, type, fs.readFileSync(file));
     }
 
+    // Two qualities of the fixture stream (same media, different addresses): 360p and 720p
+    if (url === '/multi-hls/master.m3u8') {
+      return m3u8(`#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=300000,RESOLUTION=640x360,CODECS="avc1.42e01e"
+low.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=1280x720,CODECS="avc1.42e01e"
+high.m3u8
+`);
+    }
+    const multiMatch = /^\/multi-hls\/(low|high)\.m3u8$/.exec(url);
+    if (multiMatch) {
+      const src = fs.readFileSync(path.join(__dirname, 'fixtures', 'hls', 'index.m3u8'), 'utf8');
+      return m3u8(src.split(/\r?\n/).map(l => l.replace('URI="init.mp4"', `URI="${ORIGIN}/hls-real/init.mp4"`)
+        .replace(/^(seg\d+\.m4s)$/, `${ORIGIN}/hls-real/$1?q=${multiMatch[1]}`)).join('\n'));
+    }
+
+    // The fixture stream on an unreliable server: every segment fails twice (503, then 429 with
+    // Retry-After: 1) before it is served. The whole-video download must still get all of them.
+    const flakyMatch = /^\/flaky-hls\/([\w.-]+)$/.exec(url);
+    if (flakyMatch) {
+      const file = path.join(__dirname, 'fixtures', 'hls', flakyMatch[1]);
+      if (!fs.existsSync(file)) return send(404, 'text/plain', 'missing');
+      if (file.endsWith('.m4s')) {
+        const n = log.flaky[flakyMatch[1]] = (log.flaky[flakyMatch[1]] || 0) + 1;
+        if (n === 1) return send(503, 'text/plain', 'busy');
+        if (n === 2) return send(429, 'text/plain', 'slow down', { 'retry-after': '1' });
+      }
+      return send(200, file.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : 'video/mp4', fs.readFileSync(file));
+    }
+
     // The fixture stream with a subtitle track in the master playlist: two WebVTT segments with
     // X-TIMESTAMP-MAP (the second one repeats a cue that spans the segment boundary)
     if (url === '/hls-subs/master.m3u8') {
@@ -122,6 +152,7 @@ sub1.vtt
     }
     const padMatch = /^\/big-hls\/pad\/(seg\d+\.m4s)$/.exec(url);
     if (padMatch) {
+      log.big.push(req.url);
       const seg = fs.readFileSync(path.join(__dirname, 'fixtures', 'hls', padMatch[1]));
       const free = Buffer.alloc(1024 * 1024);
       free.writeUInt32BE(free.length, 0);

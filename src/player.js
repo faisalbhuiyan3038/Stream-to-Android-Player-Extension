@@ -6,9 +6,13 @@ import { isHLSProvider } from 'vidstack';
 import Hls from 'hls.js';
 import { loadSubtitleAsVtt } from './subtitles.mjs';
 import { getVideoUrl, getSubtitleList, getTitle } from './page-params.mjs';
-import { attachPlaybackMemory, lockOrientationOnFullscreen, makeToast } from './player-memory.mjs';
+import { attachPlaybackMemory, lockOrientationOnFullscreen, makeToast, createMemory } from './player-memory.mjs';
 import { SegmentPrefetcher, bufferingSettings } from './prefetch.mjs';
 import { createPrefetchLoader } from './hls-prefetch.mjs';
+import { openPlayerCache } from './stream-cache.mjs';
+import { createCacheLoader, hlsPlan, pickLevelIndex, desiredHeight } from './cache-hls.mjs';
+import { createCacheBadge, throttle } from './cache-ui.mjs';
+import { startFileCache, onComplete, saveStreamFromCache, saveFileFromCache } from './player-cache.mjs';
 
 // The extension's settings (player pages are extension pages, so storage is available)
 async function readSettings() {
@@ -90,12 +94,47 @@ if (!videoUrl) {
 }
 
 async function start() {
-  const buffering = bufferingSettings(await readSettings(), { mobile: isMobile() });
+  const mobile = isMobile();
+  const buffering = bufferingSettings(await readSettings(), { mobile });
+  const streamType = getStreamType(videoUrl);
+  const memory = createMemory();
   let hlsProvider = null;
-  const prefetcher = buffering.enabled
+  let hls = null;
+  let badge = null;
+  let filePlan = null;
+
+  // Whole-video download while watching (FastStream-style, src/stream-cache.mjs): every segment
+  // of the playing quality goes to IndexedDB, and hls.js is served from there.
+  let cache = null;
+  if (buffering.wholeVideo) {
+    const update = throttle(c => { if (badge) badge.update(c.progress()); }, 500);
+    cache = await openPlayerCache({ maxBytes: buffering.cacheBytes, parallel: buffering.parallel, mobile, onChange: update })
+      .catch((e) => { console.warn('Whole-video download unavailable:', e); return null; });
+  }
+  window._cache = cache; // read by the browser tests
+  const prefetcher = !cache && buffering.enabled
     ? new SegmentPrefetcher({ maxParallel: buffering.parallel, maxBytes: buffering.prefetchBytes })
     : null;
   window._prefetch = prefetcher; // read by the browser tests
+
+  // hls.js with the cache: play (and download) one quality, the one closest to the screen size or
+  // to the quality picked last time; the quality menu changes it, and the download follows.
+  function attachCache(instance) {
+    hls = instance;
+    window._hls = instance;
+    instance.on(Hls.Events.MANIFEST_PARSED, () => {
+      if (instance.levels.length < 2) return;
+      const index = pickLevelIndex(instance.levels, desiredHeight(memory.preferredHeight()));
+      if (index >= 0) {
+        instance.startLevel = index;
+        instance.currentLevel = index;
+      }
+    });
+    const replan = () => cache.setPlan(hlsPlan(instance));
+    for (const ev of [Hls.Events.LEVEL_LOADED, Hls.Events.LEVEL_SWITCHED, Hls.Events.AUDIO_TRACK_LOADED, Hls.Events.AUDIO_TRACK_SWITCHED]) {
+      instance.on(ev, replan);
+    }
+  }
 
   // HLS: hand our locally bundled Hls class to the provider so no CDN
   // fetch is attempted (extension CSP blocks external scripts).
@@ -104,18 +143,46 @@ async function start() {
     if (isHLSProvider(provider)) {
       hlsProvider = provider;
       provider.library = Hls;
-      if (prefetcher) {
+      const depth = {
+        maxBufferLength: buffering.bufferAhead,
+        maxMaxBufferLength: buffering.bufferAhead * 2,
+        maxBufferSize: buffering.maxBufferBytes,
+        backBufferLength: 30
+      };
+      if (cache) {
+        provider.config = { fLoader: createCacheLoader(Hls.DefaultConfig.loader, () => cache), ...depth };
+        provider.onInstance(attachCache);
+      } else if (prefetcher) {
         // "Faster buffering": parallel fragment downloads + a deeper buffer
         provider.config = {
           fLoader: createPrefetchLoader(Hls.DefaultConfig.loader, () => hlsProvider && hlsProvider.instance, prefetcher, { aheadSeconds: buffering.bufferAhead }),
-          maxBufferLength: buffering.bufferAhead,
-          maxMaxBufferLength: buffering.bufferAhead * 2,
-          maxBufferSize: buffering.maxBufferBytes,
-          backBufferLength: 30
+          ...depth
         };
       }
     }
   });
+
+  async function save(button) {
+    button.disabled = true;
+    try {
+      if (filePlan) {
+        const name = await saveFileFromCache(cache, filePlan, { url: videoUrl, title });
+        toast(`Saved ${name}`);
+      } else {
+        const level = hls && hls.levels[hls.currentLevel];
+        const audio = hls && hls.audioTracks && hls.audioTracks[hls.audioTrack];
+        await saveStreamFromCache(cache, {
+          url: videoUrl,
+          title,
+          choice: { height: level && level.height, bandwidth: level && level.bitrate, audioLanguage: audio && audio.lang }
+        });
+      }
+    } catch (e) {
+      toast(`Could not save: ${e.message || e}`);
+    } finally {
+      button.disabled = false;
+    }
+  }
 
   player.src = videoUrl;
 
@@ -128,16 +195,55 @@ async function start() {
     if (video) {
       // the rate goes through Vidstack's own state, which would otherwise put it back to 1
       attachPlaybackMemory(video, videoUrl, {
+        memory,
         toast,
         setRate: r => { player.playbackRate = r; },
         seek: t => { player.currentTime = t; }
       });
       lockOrientationOnFullscreen(video);
     }
+    if (cache && video) startCacheUi(video);
     addSubtitles().finally(() => {
       player.play().catch((e) => {
         console.log('Autoplay blocked:', e.message);
       });
     });
   }, { once: true });
+
+  function startCacheUi(video) {
+    badge = createCacheBadge(player, video, { onSave: save });
+    badge.update(cache.progress());
+    if (streamType === 'hls') {
+      const onTime = () => cache.setPosition(video.currentTime);
+      video.addEventListener('timeupdate', onTime);
+      video.addEventListener('seeking', onTime);
+      return;
+    }
+    // A plain file: cached as byte ranges; once all of it is in, playback switches to the local
+    // copy, so nothing depends on the network any more.
+    startFileCache(cache, video, videoUrl).then((plan) => {
+      filePlan = plan;
+      window._filePlan = plan;
+      if (!plan) {
+        badge.destroy();
+        badge = null;
+        return;
+      }
+      onComplete(cache, () => switchToLocalCopy(video, plan));
+    });
+  }
+
+  async function switchToLocalCopy(video, plan) {
+    const blob = await cache.assemble(plan.type);
+    if (!blob) return;
+    const at = video.currentTime;
+    const paused = video.paused;
+    const rate = video.playbackRate;
+    video.src = URL.createObjectURL(blob);
+    await new Promise((resolve) => video.addEventListener('loadedmetadata', resolve, { once: true }));
+    video.currentTime = at;
+    video.playbackRate = rate;
+    if (!paused) video.play().catch(() => {});
+    window._playingLocalCopy = true;
+  }
 }

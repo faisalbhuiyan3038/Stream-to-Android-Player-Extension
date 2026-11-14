@@ -111,3 +111,50 @@ media-player media-outlet video {
   .shaka-overflow-menu button,
   .shaka-settings-menu button { min-height: 44px; min-width: 44px; }
 }
+
+/* Whole-video download badge (src/cache-ui.mjs), top-left over the video; inside the element
+   that goes fullscreen (media-player / #player-container) so it stays visible there */
+.sap-cache {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  left: calc(10px + env(safe-area-inset-left, 0px));
+  max-width: calc(100% - 20px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px 5px 10px;
+  border-radius: 8px;
+  background: rgba(10, 10, 16, 0.62);
+  color: #fff;
+  font: 13px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  z-index: 2147482000;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+.sap-cache.sap-hidden { opacity: 0; }
+.sap-cache.sap-hidden button { visibility: hidden; }
+.sap-cache-bar {
+  width: 56px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.25);
+  overflow: hidden;
+  flex: none;
+}
+.sap-cache-bar > span { display: block; height: 100%; width: 0; background: #4caf50; transition: width 0.4s; }
+.sap-cache.complete .sap-cache-bar { display: none; }
+.sap-cache button {
+  pointer-events: auto;
+  min-height: 32px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 6px;
+  background: #4caf50;
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+@media (pointer: coarse) {
+  .sap-cache button { min-height: 44px; min-width: 56px; }
+}
