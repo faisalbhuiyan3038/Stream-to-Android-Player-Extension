@@ -895,7 +895,7 @@ async function cacheRun(file, url, { timeout = 90000, title = 'Whole Video' } = 
     return {
       buffered: v.buffered.length ? v.buffered.end(v.buffered.length - 1) : 0,
       stats: window._cache.stats,
-      badge: (document.querySelector('.sap-cache') || {}).textContent || '',
+      badge: (document.querySelector('.sap-save') || {}).title || '',
       badgeState: (document.querySelector('.sap-cache') || { dataset: {} }).dataset.state
     };
   });
@@ -904,8 +904,8 @@ async function cacheRun(file, url, { timeout = 90000, title = 'Whole Video' } = 
 
 // Presses the badge's Save button; returns the download page's result and the saved file
 async function saveFromBadge(page) {
-  await page.evaluate(() => { const b = document.querySelector('.sap-cache button'); b.closest('.sap-cache').classList.remove('sap-hidden'); });
-  const [dlPage] = await Promise.all([ctx.waitForEvent('page', { timeout: 15000 }), page.click('.sap-cache button')]);
+  // the control sits in the player's control bar (hidden while idle): press it directly
+  const [dlPage] = await Promise.all([ctx.waitForEvent('page', { timeout: 15000 }), page.evaluate(() => document.querySelector('.sap-save').click())]);
   const download = await dlPage.waitForEvent('download', { timeout: 60000 });
   const file = path.join(os.tmpdir(), `sap-cache-${Date.now()}-${download.suggestedFilename()}`);
   await download.saveAs(file);
@@ -970,8 +970,7 @@ for (const [name, file] of [['Vidstack', 'player.html'], ['Shaka', 'player-shaka
     });
     assert.deepEqual(local, { src: 'blob:', advanced: true, error: null });
     await run.page.evaluate(() => document.querySelector('video').pause());
-    await run.page.evaluate(() => document.querySelector('.sap-cache').classList.remove('sap-hidden'));
-    const [download] = await Promise.all([run.page.waitForEvent('download', { timeout: 15000 }), run.page.click('.sap-cache button')]);
+    const [download] = await Promise.all([run.page.waitForEvent('download', { timeout: 15000 }), run.page.evaluate(() => document.querySelector('.sap-save').click())]);
     const out = path.join(os.tmpdir(), `sap-file-${Date.now()}.webm`);
     await download.saveAs(out);
     assert.equal(download.suggestedFilename(), 'Clip.webm');
@@ -1059,20 +1058,22 @@ async function openLoading(file) {
   await page.evaluate(() => { const v = document.querySelector('video'); if (v) v.pause(); });
   return page;
 }
-const clickBadge = (page, cls) => page.evaluate((c) => document.querySelector(`.sap-cache .${c}`).click(), cls);
+const clickBadge = (page, cls) => page.evaluate((c) => document.querySelector(`.${c}`).click(), cls);
 
 for (const [name, file] of [['Vidstack', 'player.html'], ['Shaka', 'player-shaka.html'], ['ArtPlayer', 'player-art.html']]) {
   test(`whole video (${name}): Save while loading → "Whole video" waits for the download, then saves without fetching again`, async (t) => {
     const page = await openLoading(file);
     assert.equal(await page.evaluate(() => window._cache.progress().complete), false, 'already complete: the test stream is too fast');
     await clickBadge(page, 'sap-save');
-    const choices = await page.evaluate(() => [...document.querySelectorAll('.sap-cache button')].filter(b => !b.hidden).map(b => b.textContent));
-    assert.deepEqual(choices, ['Cancel', 'Whole video', 'Loaded part']);
+    const choices = await page.evaluate(() => { const m = document.querySelector('.sap-save-menu'); return m.hidden ? null : [...m.querySelectorAll('button')].filter(b => !b.hidden).map(b => b.textContent); });
+    assert.deepEqual(choices, ['Save whole video', 'Save loaded part']);
+    // nothing is drawn over the picture: the control is inside the player's control bar
+    assert.equal(await page.evaluate(() => !!document.querySelector('.sap-cache').closest('media-community-skin, .shaka-controls-button-panel, .art-controls')), true);
     site.log.segments.length = 0;
     const dlPromise = ctx.waitForEvent('page', { timeout: 60000 });
     await clickBadge(page, 'sap-save-whole');
     assert.equal(await page.evaluate(() => document.querySelector('.sap-cache').dataset.state), 'pending');
-    assert.match(await page.textContent('.sap-cache'), /Saving when loaded/);
+    assert.match(await page.getAttribute('.sap-save', 'title'), /Will save when loaded/);
     const dlPage = await dlPromise;
     const opened = await page.evaluate(() => window._cache.progress());
     assert.equal(opened.complete, true, 'the download page opened before the video was loaded');

@@ -9,7 +9,7 @@ import { bufferingSettings } from './prefetch.mjs';
 import { openPlayerCache } from './stream-cache.mjs';
 import { registerCacheScheme, shakaPlan, pickVariant } from './cache-shaka.mjs';
 import { desiredHeight } from './cache-hls.mjs';
-import { createCacheBadge, throttle } from './cache-ui.mjs';
+import { createSaveControl, throttle } from './cache-ui.mjs';
 import { startFileCache, onComplete, saveCached, attachSaver } from './player-cache.mjs';
 
 async function readSettings() {
@@ -248,8 +248,21 @@ async function init() {
       }
     };
     let saver = null;
-    badge = createCacheBadge(container, video, { onSave: (mode, b) => saver(mode, b), canSavePart: () => !filePlan });
+    badge = createSaveControl({ onSave: (mode, b) => saver(mode, b), canSavePart: () => !filePlan, menuHost: container });
     saver = attachSaver(cache, badge, saveNow);
+    // A Shaka UI element in the control bar, before fullscreen
+    const control = badge.el;
+    class SaveElement extends shaka.ui.Element {
+      constructor(parent, controls) {
+        super(parent, controls);
+        parent.appendChild(control);
+      }
+    }
+    shaka.ui.Controls.registerElement('sap_save', { create: (root, controls) => new SaveElement(root, controls) });
+    const list = ui.getConfiguration().controlPanelElements.filter(x => x !== 'sap_save');
+    const at = ['fullscreen', 'overflow_menu'].map(x => list.indexOf(x)).find(i => i >= 0);
+    list.splice(at == null ? list.length : at, 0, 'sap_save');
+    ui.configure({ controlPanelElements: list });
     badge.update(cache.progress());
 
     if (!player.getManifest()) {

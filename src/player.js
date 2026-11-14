@@ -11,7 +11,7 @@ import { SegmentPrefetcher, bufferingSettings } from './prefetch.mjs';
 import { createPrefetchLoader } from './hls-prefetch.mjs';
 import { openPlayerCache } from './stream-cache.mjs';
 import { createCacheLoader, hlsPlan, pickLevelIndex, desiredHeight } from './cache-hls.mjs';
-import { createCacheBadge, throttle } from './cache-ui.mjs';
+import { createSaveControl, throttle } from './cache-ui.mjs';
 import { startFileCache, onComplete, saveCached, attachSaver } from './player-cache.mjs';
 
 // The extension's settings (player pages are extension pages, so storage is available)
@@ -204,8 +204,9 @@ async function start() {
 
   function startCacheUi(video) {
     let saver = null;
-    badge = createCacheBadge(player, video, { onSave: (mode, b) => saver(mode, b), canSavePart: () => !filePlan });
+    badge = createSaveControl({ onSave: (mode, b) => saver(mode, b), canSavePart: () => !filePlan, menuHost: player });
     saver = attachSaver(cache, badge, saveNow);
+    mountInSkin(badge.el);
     badge.update(cache.progress());
     if (streamType === 'hls') {
       const onTime = () => cache.setPosition(video.currentTime);
@@ -225,6 +226,20 @@ async function start() {
       }
       onComplete(cache, () => switchToLocalCopy(video, plan));
     });
+  }
+
+  // The Save control goes into the skin's bottom control row, before picture-in-picture (put back
+  // if the skin re-renders that row)
+  function mountInSkin(el) {
+    const insert = () => {
+      if (el.isConnected || !badge || badge.el !== el) return;
+      const groups = player.querySelectorAll('media-community-skin [part~="controls-group"]');
+      const group = groups[groups.length - 1];
+      if (!group) return;
+      group.insertBefore(el, group.querySelector('media-pip-button, media-fullscreen-button'));
+    };
+    insert();
+    new MutationObserver(insert).observe(player, { childList: true, subtree: true });
   }
 
   async function switchToLocalCopy(video, plan) {

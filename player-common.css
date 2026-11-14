@@ -112,52 +112,76 @@ media-player media-outlet video {
   .shaka-settings-menu button { min-height: 44px; min-width: 44px; }
 }
 
-/* Whole-video download badge (src/cache-ui.mjs), top-left over the video; inside the element
-   that goes fullscreen (media-player / #player-container) so it stays visible there */
+/* Whole-video download control (src/cache-ui.mjs): a button in each player's control bar with a
+   thin progress ring; it fades with the controls. Its menu opens above it on tap. */
 .sap-cache {
-  position: absolute;
-  top: calc(10px + env(safe-area-inset-top, 0px));
-  left: calc(10px + env(safe-area-inset-left, 0px));
-  max-width: calc(100% - 20px);
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 6px 5px 10px;
-  border-radius: 8px;
-  background: rgba(10, 10, 16, 0.62);
-  color: #fff;
-  font: 13px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  z-index: 2147482000;
-  transition: opacity 0.3s;
-  pointer-events: none;
-}
-.sap-cache.sap-hidden { opacity: 0; }
-.sap-cache.sap-hidden button { visibility: hidden; }
-.sap-cache-bar {
-  width: 56px;
-  height: 4px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.25);
-  overflow: hidden;
+  justify-content: center;
   flex: none;
 }
-.sap-cache-bar > span { display: block; height: 100%; width: 0; background: #4caf50; transition: width 0.4s; }
-.sap-cache.complete .sap-cache-bar { display: none; }
-.sap-cache button {
-  pointer-events: auto;
-  min-height: 32px;
-  padding: 0 12px;
+.sap-cache .sap-save {
+  width: 40px;
+  height: 40px;
+  padding: 6px;
   border: none;
-  border-radius: 6px;
+  border-radius: 50%;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.sap-cache .sap-save:hover, .sap-cache .sap-save:focus-visible { background: rgba(255, 255, 255, 0.12); outline: none; }
+.sap-cache svg { width: 28px; height: 28px; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.sap-cache .sap-ring-bg { stroke: rgba(255, 255, 255, 0.22); stroke-width: 2.5; }
+.sap-cache .sap-ring { stroke: #4caf50; stroke-width: 2.5; transition: stroke-dashoffset 0.5s; }
+.sap-cache .sap-arrow, .sap-cache .sap-tick { stroke: currentColor; stroke-width: 2.2; }
+.sap-cache .sap-tick { display: none; }
+.sap-cache[data-state="complete"] .sap-arrow { display: none; }
+.sap-cache[data-state="complete"] .sap-tick { display: inline; }
+.sap-cache[data-state="retrying"] .sap-ring { stroke: #ffb300; }
+.sap-cache[data-state="pending"] .sap-ring { stroke: #64b5f6; }
+
+.sap-save-menu {
+  position: absolute;
+  z-index: 2147483000;
+  width: max-content;
+  max-width: min(320px, calc(100% - 16px));
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(20, 20, 28, 0.95);
+  color: #fff;
+  font: 13px/1.35 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sap-save-menu[hidden], .sap-save-menu button[hidden] { display: none; }
+.sap-save-status { margin: 0 2px 4px; color: rgba(255, 255, 255, 0.85); }
+.sap-save-menu button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
   background: #4caf50;
   color: #fff;
   font: inherit;
   font-weight: 600;
+  text-align: left;
   cursor: pointer;
 }
+.sap-save-menu .sap-save-part, .sap-save-menu .sap-save-cancel { background: rgba(255, 255, 255, 0.14); }
 @media (pointer: coarse) {
-  .sap-cache button { min-height: 44px; min-width: 56px; }
+  .sap-cache .sap-save { width: 44px; height: 44px; }
+  .sap-save-menu button { min-height: 44px; }
 }
+/* inside the players' control bars */
+media-community-skin .sap-cache { margin: 0 2px; }
+.shaka-controls-button-panel .sap-cache .sap-save { width: 48px; height: 48px; }
+#art .art-control.art-control-sap-save { padding: 0; }
 
 /* ── ArtPlayer page ─────────────────────────────────────────────────────── */
 #art {
@@ -188,5 +212,5 @@ media-player media-outlet video {
   #art .art-video-player.art-hover .art-subtitle { bottom: calc(var(--art-control-height) * 2 + 16px); }
   #art .art-setting-item, #art .art-selector-item { min-height: 44px; }
 }
-.sap-cache button.sap-secondary { background: rgba(255, 255, 255, 0.18); }
-.sap-cache button[hidden] { display: none; }
+/* players style the SVGs in their control bars; the ring and arrow are strokes only */
+.sap-cache svg, .sap-cache svg circle, .sap-cache svg path { fill: none !important; }

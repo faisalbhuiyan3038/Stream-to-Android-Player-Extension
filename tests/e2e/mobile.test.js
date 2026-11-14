@@ -125,7 +125,7 @@ test('in-page stream menu on a phone page: opens with a tap, stays on screen, th
 
 // ── gestures and memory ─────────────────────────────────────────────────────
 
-test('ArtPlayer: double tap seeks ±10 s on the sides, the badge and its Save button are thumb-sized', async () => {
+test('ArtPlayer: double tap seeks ±10 s on the sides, the Save control is thumb-sized', async () => {
   const view = VIEWS.landscape;
   const page = await openAt(`chrome-extension://${extId}/player-art.html?url=${encodeURIComponent(`${ORIGIN}/hls-real/index.m3u8`)}`, view);
   await until(() => page.evaluate(() => { const v = document.querySelector('video'); return v && v.readyState >= 2 && v.duration > 20; }), { timeout: 15000 });
@@ -147,8 +147,7 @@ test('ArtPlayer: double tap seeks ±10 s on the sides, the badge and its Save bu
   assert.ok(back != null, `double tap left did not seek back: ${fwd} → ${await now()}`);
   // whole video loaded: the Save button is big enough for a thumb
   await until(() => page.evaluate(() => window._cache && window._cache.progress().complete), { timeout: 20000 });
-  await until(() => page.evaluate(() => !document.querySelector('.sap-cache button').hidden), { timeout: 3000 });
-  const b = await page.evaluate(() => { const r = document.querySelector('.sap-cache button').getBoundingClientRect(); return { w: r.width, h: r.height }; });
+  const b = await page.evaluate(() => { const r = document.querySelector('.sap-save').getBoundingClientRect(); return { w: r.width, h: r.height }; });
   assert.ok(b.w >= MIN && b.h >= MIN, `Save button ${JSON.stringify(b)}`);
   await page.close();
 });

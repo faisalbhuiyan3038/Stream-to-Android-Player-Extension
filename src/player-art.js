@@ -15,7 +15,7 @@ import { createPrefetchLoader } from './hls-prefetch.mjs';
 import { openPlayerCache } from './stream-cache.mjs';
 import { createCacheLoader, hlsPlan, pickLevelIndex, desiredHeight } from './cache-hls.mjs';
 import { registerCacheScheme, shakaPlan, pickVariant } from './cache-shaka.mjs';
-import { createCacheBadge, throttle } from './cache-ui.mjs';
+import { createSaveControl, throttle } from './cache-ui.mjs';
 import { startFileCache, onComplete, saveCached, attachSaver } from './player-cache.mjs';
 
 async function readSettings() {
@@ -554,8 +554,9 @@ async function main() {
 
   function startCacheUi(video) {
     let saver = null;
-    badge = createCacheBadge(art.template.$player, video, { onSave: (mode, b) => saver(mode, b), canSavePart: () => !filePlan });
+    badge = createSaveControl({ onSave: (mode, b) => saver(mode, b), canSavePart: () => !filePlan, menuHost: art.template.$player });
     saver = attachSaver(cache, badge, saveNow);
+    art.controls.add({ name: 'sap-save', position: 'right', index: 5, html: badge.el });
     badge.update(cache.progress());
     if (type !== 'native') {
       const onTime = () => cache.setPosition(video.currentTime);
@@ -570,6 +571,8 @@ async function main() {
       if (!plan) {
         badge.destroy();
         badge = null;
+        const slot = art.controls['sap-save'];
+        if (slot) slot.remove();
         return;
       }
       onComplete(cache, async () => {
