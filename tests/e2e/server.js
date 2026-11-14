@@ -65,16 +65,17 @@ function startServer() {
     // A real fMP4 HLS stream (tests/e2e/fixtures/hls, made by make-fixture.js). Under /slow-hls/
     // every segment answers after 400 ms, like a distant CDN; each request is logged with its
     // start/end time so tests can see how many ran at once.
-    const hlsMatch = /^\/(hls-real|slow-hls)\/([\w.-]+)$/.exec(url);
+    const hlsMatch = /^\/(hls-real|slow-hls|crawl-hls)\/([\w.-]+)$/.exec(url);
     if (hlsMatch) {
       const file = path.join(__dirname, 'fixtures', 'hls', hlsMatch[2]);
       if (!fs.existsSync(file)) return send(404, 'text/plain', 'run npm run make-fixture');
             const type = file.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : /\.(bin|key)$/.test(file) ? 'application/octet-stream' : 'video/mp4';
       const isSegment = file.endsWith('.m4s');
-      if (hlsMatch[1] === 'slow-hls' && isSegment) {
+      if (hlsMatch[1] !== 'hls-real' && isSegment) {
         const entry = { file: hlsMatch[2], start: Date.now(), end: 0 };
         log.segments.push(entry);
-        return setTimeout(() => { entry.end = Date.now(); send(200, type, fs.readFileSync(file)); }, 400);
+        // crawl-hls: 1.2 s per segment, slow enough to act while the whole video is loading
+        return setTimeout(() => { entry.end = Date.now(); send(200, type, fs.readFileSync(file)); }, hlsMatch[1] === 'crawl-hls' ? 1200 : 400);
       }
       return send(200, type, fs.readFileSync(file));
     }

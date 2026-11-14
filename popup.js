@@ -74,16 +74,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     saveSettings({ cacheWholeVideo: e.target.checked });
   });
   document.getElementById('cache-limit').addEventListener('change', e => saveSettings({ cacheLimitGB: parseInt(e.target.value, 10) }));
+  // Parallel downloads and buffer ahead are always shown: whole-video loading uses them too
   const fastToggle = document.getElementById('toggle-fast-buffering');
-  const fastOptions = document.getElementById('fast-buffering-options');
   fastToggle.checked = settings.fastBuffering !== false;
-  fastOptions.style.display = fastToggle.checked ? '' : 'none';
   document.getElementById('fast-buffering-parallel').value = String(settings.fastBufferingParallel || 4);
   document.getElementById('buffer-ahead').value = String(settings.bufferAheadSeconds || 0);
-  fastToggle.addEventListener('change', e => {
-    fastOptions.style.display = e.target.checked ? '' : 'none';
-    saveSettings({ fastBuffering: e.target.checked });
-  });
+  fastToggle.addEventListener('change', e => saveSettings({ fastBuffering: e.target.checked }));
   document.getElementById('fast-buffering-parallel').addEventListener('change', e => saveSettings({ fastBufferingParallel: parseInt(e.target.value, 10) }));
   document.getElementById('buffer-ahead').addEventListener('change', e => saveSettings({ bufferAheadSeconds: parseInt(e.target.value, 10) }));
 

@@ -1050,6 +1050,75 @@ test('ArtPlayer: arrow keys seek 10 s, the screenshot button saves a PNG', async
   await page.close();
 });
 
+// Opens a player on the crawling stream (1.2 s per segment, 2 at a time) and pauses it
+async function openLoading(file) {
+  await setSettings({ cacheWholeVideo: true, bufferAheadSeconds: 10, fastBufferingParallel: 2 });
+  const page = await ctx.newPage();
+  await page.goto(`chrome-extension://${extId}/${file}?url=${encodeURIComponent(`${ORIGIN}/crawl-hls/index.m3u8`)}&title=${encodeURIComponent('Slow Clip')}`);
+  await until(() => page.evaluate(() => window._cache && window._cache.progress().done >= 3), { timeout: 30000 });
+  await page.evaluate(() => { const v = document.querySelector('video'); if (v) v.pause(); });
+  return page;
+}
+const clickBadge = (page, cls) => page.evaluate((c) => document.querySelector(`.sap-cache .${c}`).click(), cls);
+
+for (const [name, file] of [['Vidstack', 'player.html'], ['Shaka', 'player-shaka.html'], ['ArtPlayer', 'player-art.html']]) {
+  test(`whole video (${name}): Save while loading → "Whole video" waits for the download, then saves without fetching again`, async (t) => {
+    const page = await openLoading(file);
+    assert.equal(await page.evaluate(() => window._cache.progress().complete), false, 'already complete: the test stream is too fast');
+    await clickBadge(page, 'sap-save');
+    const choices = await page.evaluate(() => [...document.querySelectorAll('.sap-cache button')].filter(b => !b.hidden).map(b => b.textContent));
+    assert.deepEqual(choices, ['Cancel', 'Whole video', 'Loaded part']);
+    site.log.segments.length = 0;
+    const dlPromise = ctx.waitForEvent('page', { timeout: 60000 });
+    await clickBadge(page, 'sap-save-whole');
+    assert.equal(await page.evaluate(() => document.querySelector('.sap-cache').dataset.state), 'pending');
+    assert.match(await page.textContent('.sap-cache'), /Saving when loaded/);
+    const dlPage = await dlPromise;
+    const opened = await page.evaluate(() => window._cache.progress());
+    assert.equal(opened.complete, true, 'the download page opened before the video was loaded');
+    const download = await dlPage.waitForEvent('download', { timeout: 60000 });
+    const state = await dlPage.evaluate(() => window._download);
+    t.diagnostic(JSON.stringify({ name: download.suggestedFilename(), fromCache: state.fromCache, fromNetwork: state.fromNetwork }));
+    assert.equal(state.fromNetwork, 0);
+    assert.equal(state.fromCache, 13);
+    await dlPage.close();
+    await page.close();
+  });
+}
+
+test('whole video: Save while loading → "Loaded part" saves only what is loaded (from the cache)', async (t) => {
+  const page = await openLoading('player-shaka.html');
+  await clickBadge(page, 'sap-save');
+  const [dlPage] = await Promise.all([ctx.waitForEvent('page', { timeout: 15000 }), clickBadge(page, 'sap-save-part')]);
+  const download = await dlPage.waitForEvent('download', { timeout: 60000 });
+  const state = await dlPage.evaluate(() => window._download);
+  t.diagnostic(JSON.stringify({ name: download.suggestedFilename(), duration: state.duration, fromCache: state.fromCache, fromNetwork: state.fromNetwork }));
+  assert.equal(state.partial, true);
+  assert.equal(download.suggestedFilename(), 'Slow Clip (part).mp4');
+  assert.equal(state.fromNetwork, 0);
+  assert.ok(state.duration > 4 && state.duration < 22, `duration ${state.duration}`);
+  await dlPage.close();
+  await page.close();
+});
+
+test('popup: parallel downloads stays visible with faster buffering off, and the whole-video download uses it (8)', async () => {
+  await setSettings({ cacheWholeVideo: true, fastBuffering: true, fastBufferingParallel: 4 });
+  const popup = await ctx.newPage();
+  await popup.goto(`chrome-extension://${extId}/popup.html`);
+  await popup.click('label.toggle:has(#toggle-fast-buffering)'); // the switch drawn over the checkbox
+  assert.equal(await popup.isChecked('#toggle-fast-buffering'), false);
+  assert.equal(await popup.isVisible('#fast-buffering-parallel'), true);
+  assert.equal(await popup.isVisible('#buffer-ahead'), true);
+  await popup.selectOption('#fast-buffering-parallel', '8');
+  await sleep(400);
+  await popup.close();
+  const page = await ctx.newPage();
+  await page.goto(`chrome-extension://${extId}/player-art.html?url=${encodeURIComponent(`${ORIGIN}/hls-real/index.m3u8`)}`);
+  assert.equal(await until(() => page.evaluate(() => window._cache && window._cache.maxParallel)), 8);
+  await page.close();
+  await setSettings({ fastBuffering: true, fastBufferingParallel: 4 });
+});
+
 test('whole video: off in the settings means no cache (and no badge)', async () => {
   await setSettings({ cacheWholeVideo: false });
   const page = await ctx.newPage();

@@ -24,8 +24,15 @@ const state = window._download = { state: 'starting', error: null, size: 0, dura
 // at once (autostart).
 const params = new URLSearchParams(window.location.search);
 let cacheStore = null;
+// partial=1: only what the player has loaded so far (like FastStream's Alt+Save); gaps are joined
+const partial = params.get('partial') === '1';
+let cachedKeys = new Set();
 const cacheReady = params.get('cache')
-  ? IdbStore.openExisting(params.get('cache')).then((s) => { cacheStore = s; state.cache = s.name; }).catch(() => { state.cache = null; })
+  ? IdbStore.openExisting(params.get('cache')).then(async (s) => {
+    cacheStore = s;
+    state.cache = s.name;
+    if (partial) cachedKeys = new Set(await s.keys());
+  }).catch(() => { state.cache = null; })
   : Promise.resolve();
 
 // Shaka reads the stream here too (to list qualities, it buffers a second): from the cache as well
@@ -255,7 +262,11 @@ async function main() {
   if (info.live) return fail(new Error('This is a live stream; live streams cannot be downloaded.'));
   if (info.drm) return fail(new Error('This stream is DRM-protected and cannot be downloaded.'));
 
-  $('name').value = safeFileName(title || 'video', 'mp4');
+  $('name').value = safeFileName(partial ? `${title || 'video'} (part)` : (title || 'video'), 'mp4');
+  if (partial) {
+    state.partial = true;
+    $('warning').hidden = false;
+  }
   const quality = $('quality');
   for (const v of info.videos) {
     const o = document.createElement('option');
@@ -315,6 +326,7 @@ async function main() {
     } else if (bytes > 1024 * 1024 * 1024) {
       warning = `Needs about ${mb(bytes * 2)} of free storage while it downloads (the segments, then the saved file).`;
     }
+    if (partial) warning = 'Only the part the player has loaded so far is saved; missing stretches are skipped.';
     $('warning').hidden = !warning;
     $('warning').textContent = warning;
   };
@@ -345,6 +357,7 @@ async function main() {
         text,
         store: await getStore(),
         shaka, manifest, parallel, signal: controller.signal, fetchFn: cachedFetch,
+        keep: partial && cacheStore ? (u, r) => cachedKeys.has(segmentKey(u, r.start, r.end)) : null,
         choice: {
           videoId: info.videos.length ? Number(quality.value) : null,
           audioId: info.audios.length ? Number(audioSel.value) : null

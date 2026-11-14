@@ -10,7 +10,7 @@ import { openPlayerCache } from './stream-cache.mjs';
 import { registerCacheScheme, shakaPlan, pickVariant } from './cache-shaka.mjs';
 import { desiredHeight } from './cache-hls.mjs';
 import { createCacheBadge, throttle } from './cache-ui.mjs';
-import { startFileCache, onComplete, saveStreamFromCache, saveFileFromCache } from './player-cache.mjs';
+import { startFileCache, onComplete, saveCached, attachSaver } from './player-cache.mjs';
 
 async function readSettings() {
   try {
@@ -235,27 +235,21 @@ async function init() {
   // one; what is already in stays).
   function startCache() {
     let filePlan = null;
-    badge = createCacheBadge(container, video, {
-      onSave: async (button) => {
-        button.disabled = true;
-        try {
-          if (filePlan) {
-            toast(`Saved ${await saveFileFromCache(cache, filePlan, { url: videoUrl, title })}`);
-          } else {
-            const active = player.getVariantTracks().find(t => t.active) || {};
-            await saveStreamFromCache(cache, {
-              url: videoUrl,
-              title,
-              choice: { height: active.height, bandwidth: active.videoBandwidth || active.bandwidth, audioLanguage: active.language }
-            });
-          }
-        } catch (e) {
-          toast(`Could not save: ${e.message || e}`);
-        } finally {
-          button.disabled = false;
-        }
+    const saveNow = async (mode) => {
+      try {
+        const active = player.getVariantTracks().find(t => t.active) || {};
+        const name = await saveCached(cache, {
+          filePlan, url: videoUrl, title, mode,
+          choice: { height: active.height, bandwidth: active.videoBandwidth || active.bandwidth, audioLanguage: active.language }
+        });
+        if (name) toast(`Saved ${name}`);
+      } catch (e) {
+        toast(`Could not save: ${e.message || e}`);
       }
-    });
+    };
+    let saver = null;
+    badge = createCacheBadge(container, video, { onSave: (mode, b) => saver(mode, b), canSavePart: () => !filePlan });
+    saver = attachSaver(cache, badge, saveNow);
     badge.update(cache.progress());
 
     if (!player.getManifest()) {

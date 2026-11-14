@@ -198,7 +198,9 @@ async function fragmentsOf(blob, held) {
 // choice: { videoId, audioId }. store: where segments wait (segment-store.mjs; IndexedDB in the
 // download page). text: subtitle tracks for the file (see planMp4).
 // Returns { blob, size, duration, tracks, peakHeld, storage }.
-export async function downloadManifest({ shaka, manifest, choice, parallel = 4, signal, onProgress = () => {}, fetchFn, store = new MemoryStore(), text = [] }) {
+// keep(uri, range): only segments it accepts are downloaded (a partial save of what a player has
+// already loaded; gaps are closed by the merger like discontinuities).
+export async function downloadManifest({ shaka, manifest, choice, parallel = 4, signal, onProgress = () => {}, fetchFn, store = new MemoryStore(), text = [], keep = null }) {
   const video = choice.videoId != null ? findStream(manifest, 'video', choice.videoId) : null;
   const audio = choice.audioId != null ? findStream(manifest, 'audio', choice.audioId) : null;
   if (!video && !audio) throw new Error('Nothing selected to download');
@@ -222,6 +224,14 @@ export async function downloadManifest({ shaka, manifest, choice, parallel = 4, 
     if (job.sameBytesAs != null) continue;
     job.refs = await referencesOf(job.stream);
     if (!job.refs.length) throw new Error('The playlist has no segments');
+    // position in the playlist of each ref (the AES-128 IV comes from it)
+    job.nums = job.refs.map((r, n) => n);
+    if (keep) {
+      const kept = job.refs.map((ref, n) => [ref, n]).filter(([ref]) => keep(uriOf(ref), byteRange(ref)));
+      job.refs = kept.map(([ref]) => ref);
+      job.nums = kept.map(([, n]) => n);
+      if (!job.refs.length) throw new Error('Nothing of this stream has been loaded yet');
+    }
   }
   const total = jobs.filter(j => j.sameBytesAs == null).reduce((n, j) => n + j.refs.length, 0);
   let done = 0;
@@ -244,7 +254,7 @@ export async function downloadManifest({ shaka, manifest, choice, parallel = 4, 
       held.add(data.length);
       const key = aesKeyOf(ref);
       if (key) {
-        const plain = await decryptAes128(data, key, key.firstMediaSequenceNumber + i);
+        const plain = await decryptAes128(data, key, key.firstMediaSequenceNumber + job.nums[i]);
         held.add(plain.length);
         held.sub(data.length);
         data = plain;

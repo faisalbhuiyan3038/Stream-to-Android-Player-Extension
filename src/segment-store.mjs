@@ -80,6 +80,10 @@ export class IdbStore {
     await req(this.tx('readwrite').delete(key));
   }
 
+  async keys() {
+    return req(this.tx('readonly').getAllKeys());
+  }
+
   async destroy() {
     try { this.db.close(); } catch { /* already closed */ }
     await new Promise(resolve => {
@@ -104,6 +108,8 @@ export class MemoryStore {
   }
 
   async delete(key) { this.map.delete(key); }
+
+  async keys() { return [...this.map.keys()]; }
 
   async destroy() { this.map.clear(); }
 }

@@ -12,7 +12,7 @@ import { createPrefetchLoader } from './hls-prefetch.mjs';
 import { openPlayerCache } from './stream-cache.mjs';
 import { createCacheLoader, hlsPlan, pickLevelIndex, desiredHeight } from './cache-hls.mjs';
 import { createCacheBadge, throttle } from './cache-ui.mjs';
-import { startFileCache, onComplete, saveStreamFromCache, saveFileFromCache } from './player-cache.mjs';
+import { startFileCache, onComplete, saveCached, attachSaver } from './player-cache.mjs';
 
 // The extension's settings (player pages are extension pages, so storage is available)
 async function readSettings() {
@@ -162,25 +162,17 @@ async function start() {
     }
   });
 
-  async function save(button) {
-    button.disabled = true;
+  async function saveNow(mode) {
     try {
-      if (filePlan) {
-        const name = await saveFileFromCache(cache, filePlan, { url: videoUrl, title });
-        toast(`Saved ${name}`);
-      } else {
-        const level = hls && hls.levels[hls.currentLevel];
-        const audio = hls && hls.audioTracks && hls.audioTracks[hls.audioTrack];
-        await saveStreamFromCache(cache, {
-          url: videoUrl,
-          title,
-          choice: { height: level && level.height, bandwidth: level && level.bitrate, audioLanguage: audio && audio.lang }
-        });
-      }
+      const level = hls && hls.levels[hls.currentLevel];
+      const audio = hls && hls.audioTracks && hls.audioTracks[hls.audioTrack];
+      const name = await saveCached(cache, {
+        filePlan, url: videoUrl, title, mode,
+        choice: { height: level && level.height, bandwidth: level && level.bitrate, audioLanguage: audio && audio.lang }
+      });
+      if (name) toast(`Saved ${name}`);
     } catch (e) {
       toast(`Could not save: ${e.message || e}`);
-    } finally {
-      button.disabled = false;
     }
   }
 
@@ -211,7 +203,9 @@ async function start() {
   }, { once: true });
 
   function startCacheUi(video) {
-    badge = createCacheBadge(player, video, { onSave: save });
+    let saver = null;
+    badge = createCacheBadge(player, video, { onSave: (mode, b) => saver(mode, b), canSavePart: () => !filePlan });
+    saver = attachSaver(cache, badge, saveNow);
     badge.update(cache.progress());
     if (streamType === 'hls') {
       const onTime = () => cache.setPosition(video.currentTime);

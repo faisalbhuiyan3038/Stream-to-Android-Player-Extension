@@ -16,7 +16,7 @@ import { openPlayerCache } from './stream-cache.mjs';
 import { createCacheLoader, hlsPlan, pickLevelIndex, desiredHeight } from './cache-hls.mjs';
 import { registerCacheScheme, shakaPlan, pickVariant } from './cache-shaka.mjs';
 import { createCacheBadge, throttle } from './cache-ui.mjs';
-import { startFileCache, onComplete, saveStreamFromCache, saveFileFromCache } from './player-cache.mjs';
+import { startFileCache, onComplete, saveCached, attachSaver } from './player-cache.mjs';
 
 async function readSettings() {
   try {
@@ -492,18 +492,12 @@ async function main() {
   const applySubSize = (v) => art.subtitle.style({ fontSize: `calc(var(--art-subtitle-font-size, 20px) * ${v})` });
 
   // ── Save (whole video loaded) ──
-  async function save(button) {
-    button.disabled = true;
+  async function saveNow(mode) {
     try {
-      if (filePlan) {
-        toast(`Saved ${await saveFileFromCache(cache, filePlan, { url: videoUrl, title })}`);
-      } else {
-        await saveStreamFromCache(cache, { url: videoUrl, title, choice: engine.choice() });
-      }
+      const name = await saveCached(cache, { filePlan, url: videoUrl, title, mode, choice: engine.choice() });
+      if (name) toast(`Saved ${name}`);
     } catch (e) {
       toast(`Could not save: ${e.message || e}`);
-    } finally {
-      button.disabled = false;
     }
   }
 
@@ -559,7 +553,9 @@ async function main() {
   });
 
   function startCacheUi(video) {
-    badge = createCacheBadge(art.template.$player, video, { onSave: save });
+    let saver = null;
+    badge = createCacheBadge(art.template.$player, video, { onSave: (mode, b) => saver(mode, b), canSavePart: () => !filePlan });
+    saver = attachSaver(cache, badge, saveNow);
     badge.update(cache.progress());
     if (type !== 'native') {
       const onTime = () => cache.setPosition(video.currentTime);

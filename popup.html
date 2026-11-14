@@ -101,31 +101,21 @@
       </select>
     </div>
 
-    <!-- Faster buffering (built-in players) -->
-    <div class="setting-row">
-      <div class="setting-label">
-        <span class="setting-title">Faster buffering in the browser player</span>
-        <span class="setting-desc">Downloads upcoming segments in parallel and keeps a deeper buffer (HLS / DASH)</span>
-      </div>
-      <label class="toggle">
-        <input type="checkbox" id="toggle-fast-buffering" checked>
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-    <div id="fast-buffering-options" class="setting-row column">
+    <!-- Download speed and buffer (built-in players; used by whole-video loading and faster buffering) -->
+    <div id="loading-options" class="setting-row column">
       <div class="setting-label">
         <span class="setting-title">Parallel downloads</span>
-        <span class="setting-desc">Maximum; it ramps up only while it makes loading faster</span>
+        <span class="setting-desc">Most pieces of the video loaded at once (whole-video loading and faster buffering). It starts at 2 and adds more only while that makes loading faster</span>
       </div>
       <select id="fast-buffering-parallel" class="select-dropdown">
         <option value="2">2</option>
-        <option value="4">4</option>
+        <option value="4">4 (default)</option>
         <option value="6">6</option>
         <option value="8">8</option>
       </select>
       <div class="setting-label" style="margin-top: 8px;">
         <span class="setting-title">Buffer ahead</span>
-        <span class="setting-desc">How much video to load before it is needed</span>
+        <span class="setting-desc">How much video the player keeps ready to play (with whole-video loading the rest waits in the downloaded copy)</span>
       </div>
       <select id="buffer-ahead" class="select-dropdown">
         <option value="0">Automatic (2 min, 1 min on phones)</option>
@@ -134,6 +124,18 @@
         <option value="300">5 minutes</option>
         <option value="600">10 minutes</option>
       </select>
+    </div>
+
+    <!-- Faster buffering (built-in players, when whole-video loading is off) -->
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-title">Faster buffering (without whole-video loading)</span>
+        <span class="setting-desc">When "Load the whole video" is off: loads the next minutes in parallel instead of one piece at a time (HLS / DASH)</span>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="toggle-fast-buffering" checked>
+        <span class="toggle-slider"></span>
+      </label>
     </div>
 
     <!-- Max streams slider -->

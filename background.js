@@ -1100,7 +1100,7 @@ async function saveFromPlayer(playerTabId, m) {
     }
   } catch { /* no rule: nothing to forward */ }
   const params = new URLSearchParams({ url: String(m.url) });
-  for (const key of ['title', 'subs', 'cache', 'vh', 'vbw', 'alang']) {
+  for (const key of ['title', 'subs', 'cache', 'vh', 'vbw', 'alang', 'partial']) {
     if (m[key] != null && m[key] !== '') params.set(key, String(m[key]));
   }
   params.set('autostart', '1');
