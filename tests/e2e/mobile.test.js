@@ -83,9 +83,15 @@ test('popup on a phone: no horizontal overflow, thumb-sized controls (portrait a
   for (const view of Object.values(VIEWS)) {
     const page = await openAt(`chrome-extension://${extId}/popup.html`, view);
     await sleep(800);
-    const r = await page.evaluate(measure, MIN);
-    assert.equal(r.overflowX, false, `overflow at ${view.width}x${view.height}`);
-    assert.deepEqual(r.small, [], `small controls at ${view.width}x${view.height}`);
+    // every visible tab's section (External is desktop-only, so it depends on the platform)
+    const tabs = await page.$$eval('.tabs .tab', els => els.filter(e => e.offsetParent).map(e => e.id));
+    assert.ok(tabs.length >= 4, `tabs: ${tabs}`);
+    for (const id of tabs) {
+      await page.click(`#${id}`);
+      const r = await page.evaluate(measure, MIN);
+      assert.equal(r.overflowX, false, `overflow at ${view.width}x${view.height} (${id})`);
+      assert.deepEqual(r.small, [], `small controls at ${view.width}x${view.height} (${id})`);
+    }
     await page.close();
   }
 });

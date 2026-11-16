@@ -13,178 +13,48 @@
       <span id="stream-count" class="stream-count">0 streams</span>
     </header>
 
-    <!-- Streams detected on the current page -->
-    <div id="stream-list" class="stream-list"></div>
+    <!-- Tabs (popup.js initTabs). Elements marked desktop-only / android-only are shown by the
+         platform class popup.js puts on <body>. -->
+    <nav class="tabs" role="tablist" aria-label="Popup sections">
+      <button class="tab" role="tab" id="tab-streams" data-tab="streams" aria-selected="true" aria-controls="panel-streams">Streams</button>
+      <button class="tab" role="tab" id="tab-player" data-tab="player" aria-selected="false" aria-controls="panel-player" tabindex="-1">Player</button>
+      <button class="tab" role="tab" id="tab-menu" data-tab="menu" aria-selected="false" aria-controls="panel-menu" tabindex="-1">Button</button>
+      <button class="tab desktop-only" role="tab" id="tab-external" data-tab="external" aria-selected="false" aria-controls="panel-external" tabindex="-1">External</button>
+      <button class="tab" role="tab" id="tab-filters" data-tab="filters" aria-selected="false" aria-controls="panel-filters" tabindex="-1">Filters</button>
+    </nav>
 
-    <!-- Master toggle -->
-    <div class="setting-row">
-      <div class="setting-label">
-        <span class="setting-title">Detection Enabled</span>
-        <span class="setting-desc">Master switch for stream detection</span>
-      </div>
-      <label class="toggle">
-        <input type="checkbox" id="toggle-enabled" checked>
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
+    <!-- ── Streams: what this page has, and on/off ───────────────────────── -->
+    <section class="tab-panel" id="panel-streams" role="tabpanel" aria-labelledby="tab-streams" data-panel="streams">
+      <div id="stream-list" class="stream-list"></div>
 
-    <!-- Current site toggle -->
-    <div class="setting-row">
-      <div class="setting-label">
-        <span class="setting-title">Active on this site</span>
-        <span class="setting-desc" id="current-domain">—</span>
-      </div>
-      <label class="toggle">
-        <input type="checkbox" id="toggle-site" checked>
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-
-    <!-- Clean names toggle -->
-    <div class="setting-row">
-      <div class="setting-label">
-        <span class="setting-title">Clean stream names</span>
-        <span class="setting-desc">Show readable names instead of raw URLs</span>
-      </div>
-      <label class="toggle">
-        <input type="checkbox" id="toggle-clean-names" checked>
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-
-    <!-- Direct stream links -->
-    <div class="setting-row">
-      <div class="setting-label">
-        <span class="setting-title">Open stream links in the web player</span>
-        <span class="setting-desc">Going to a .m3u8 or .mpd address plays it here instead of downloading or showing text</span>
-      </div>
-      <label class="toggle">
-        <input type="checkbox" id="toggle-open-stream-links">
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-
-    <div class="setting-row">
-      <div class="setting-label">
-        <span class="setting-title">… also .mp4 links</span>
-        <span class="setting-desc">Off: clicking an .mp4 link keeps the browser's own behaviour (play or download)</span>
-      </div>
-      <label class="toggle">
-        <input type="checkbox" id="toggle-open-mp4-links">
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-
-    <!-- Whole-video download while watching (built-in players, src/stream-cache.mjs) -->
-    <div class="setting-row">
-      <div class="setting-label">
-        <span class="setting-title">Load the whole video while watching</span>
-        <span class="setting-desc">The browser player keeps downloading to the end (also in the background) and retries until it has everything; then Save needs no second download</span>
-      </div>
-      <label class="toggle">
-        <input type="checkbox" id="toggle-cache-whole-video" checked>
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-    <div id="cache-options" class="setting-row column">
-      <div class="setting-label">
-        <span class="setting-title">Storage limit</span>
-        <span class="setting-desc">Longer videos keep only a window ahead of where you are</span>
-      </div>
-      <select id="cache-limit" class="select-dropdown">
-        <option value="0">Automatic (8 GB, 3 GB on phones)</option>
-        <option value="1">1 GB</option>
-        <option value="2">2 GB</option>
-        <option value="4">4 GB</option>
-        <option value="8">8 GB</option>
-        <option value="16">16 GB</option>
-      </select>
-    </div>
-
-    <!-- Download speed and buffer (built-in players; used by whole-video loading and faster buffering) -->
-    <div id="loading-options" class="setting-row column">
-      <div class="setting-label">
-        <span class="setting-title">Parallel downloads</span>
-        <span class="setting-desc">Most pieces of the video loaded at once (whole-video loading and faster buffering). It starts at 2 and adds more only while that makes loading faster</span>
-      </div>
-      <select id="fast-buffering-parallel" class="select-dropdown">
-        <option value="2">2</option>
-        <option value="4">4 (default)</option>
-        <option value="6">6</option>
-        <option value="8">8</option>
-      </select>
-      <div class="setting-label" style="margin-top: 8px;">
-        <span class="setting-title">Buffer ahead</span>
-        <span class="setting-desc">How much video the player keeps ready to play (with whole-video loading the rest waits in the downloaded copy)</span>
-      </div>
-      <select id="buffer-ahead" class="select-dropdown">
-        <option value="0">Automatic (2 min, 1 min on phones)</option>
-        <option value="60">1 minute</option>
-        <option value="120">2 minutes</option>
-        <option value="300">5 minutes</option>
-        <option value="600">10 minutes</option>
-      </select>
-    </div>
-
-    <!-- Faster buffering (built-in players, when whole-video loading is off) -->
-    <div class="setting-row">
-      <div class="setting-label">
-        <span class="setting-title">Faster buffering (without whole-video loading)</span>
-        <span class="setting-desc">When "Load the whole video" is off: loads the next minutes in parallel instead of one piece at a time (HLS / DASH)</span>
-      </div>
-      <label class="toggle">
-        <input type="checkbox" id="toggle-fast-buffering" checked>
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-
-    <!-- Max streams slider -->
-    <div class="setting-row column">
-      <div class="setting-label">
-        <span class="setting-title">Max streams per tab</span>
-        <span class="setting-value" id="max-streams-value">50</span>
-      </div>
-      <input type="range" id="max-streams" min="10" max="100" step="5" value="50" class="slider">
-    </div>
-
-    <!-- Floating button -->
-    <div class="setting-row column">
-      <div class="setting-label">
-        <span class="setting-title">Floating button</span>
-        <span class="setting-desc">Drag it anywhere on a page (long-press on touch); it remembers the spot per site</span>
-      </div>
-      <select id="button-visibility" class="select-dropdown">
-        <option value="always">Always visible</option>
-        <option value="fade">Fade when idle</option>
-        <option value="never">Hidden (use the toolbar icon)</option>
-      </select>
-    </div>
-
-    <div class="setting-row column">
-      <div class="setting-label">
-        <span class="setting-title">Button corner</span>
-        <span class="setting-desc">Applies to all sites and clears dragged positions</span>
-      </div>
-      <select id="button-corner" class="select-dropdown">
-        <option value="bottom-right">Bottom right</option>
-        <option value="bottom-left">Bottom left</option>
-        <option value="top-right">Top right</option>
-        <option value="top-left">Top left</option>
-        <option value="custom" disabled>Custom (dragged)</option>
-      </select>
-      <button id="reset-button-position" class="save-btn">Reset button position</button>
-    </div>
-
-    <!-- Android Settings (hidden on desktop) -->
-    <div id="android-settings" style="display: none;">
-      <hr class="divider">
-      <div class="list-header">
-        <span class="setting-title" style="margin-left: 12px; margin-top: 8px;">Android Settings</span>
-      </div>
-
-      <div class="setting-row column">
+      <div class="setting-row">
         <div class="setting-label">
-          <span class="setting-title">Player</span>
+          <span class="setting-title">Detection Enabled</span>
+          <span class="setting-desc">Master switch for stream detection</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-enabled" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-label">
+          <span class="setting-title">Active on this site</span>
+          <span class="setting-desc" id="current-domain">—</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-site" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </section>
+
+    <!-- ── Player: built-in players, loading, stream links ────────────────── -->
+    <section class="tab-panel" id="panel-player" role="tabpanel" aria-labelledby="tab-player" data-panel="player" hidden>
+      <div class="setting-row column android-only">
+        <div class="setting-label">
+          <span class="setting-title">Android player app</span>
           <span class="setting-desc">App that opens a stream</span>
         </div>
         <select id="android-player" class="select-dropdown">
@@ -196,19 +66,19 @@
         </select>
       </div>
 
-      <div class="setting-row column">
+      <div class="setting-row column desktop-only">
         <div class="setting-label">
-          <span class="setting-title">Click Action</span>
-          <span class="setting-desc">What happens when you tap a stream</span>
+          <span class="setting-title">Browser player</span>
+          <span class="setting-desc">Used by ▶️ and opened stream links</span>
         </div>
-        <select id="android-default-action" class="select-dropdown">
-          <option value="default">Share / open in player</option>
-          <option value="copy">Copy Link</option>
-          <option value="browser">Play in Browser</option>
+        <select id="web-player-engine" class="select-dropdown">
+          <option value="vidstack">Vidstack (HLS / MP4; DASH opens in Shaka)</option>
+          <option value="shaka">Shaka Player (HLS / DASH / MP4, quality &amp; speed menus)</option>
+          <option value="artplayer">ArtPlayer (HLS / DASH / MP4, subtitle offset &amp; size, screenshot, gestures)</option>
         </select>
       </div>
 
-      <div class="setting-row column">
+      <div class="setting-row column android-only">
         <div class="setting-label">
           <span class="setting-title">Browser player</span>
           <span class="setting-desc">Used by "Play in Browser" and opened stream links</span>
@@ -220,79 +90,94 @@
         </select>
       </div>
 
+      <!-- Whole-video download while watching (built-in players, src/stream-cache.mjs) -->
       <div class="setting-row">
         <div class="setting-label">
-          <span class="setting-title">Show download button</span>
-          <span class="setting-desc">⬇️ saves the stream as an MP4 file (needs free storage of about twice the video's size while downloading)</span>
+          <span class="setting-title">Load the whole video while watching</span>
+          <span class="setting-desc">The browser player keeps downloading to the end (also in the background) and retries until it has everything; then Save needs no second download</span>
         </div>
         <label class="toggle">
-          <input type="checkbox" id="android-download-icon">
+          <input type="checkbox" id="toggle-cache-whole-video" checked>
           <span class="toggle-slider"></span>
         </label>
       </div>
-    </div>
-
-    <!-- Desktop Settings (hidden on Android) -->
-    <div id="desktop-settings" style="display: none;">
-      <hr class="divider">
-      <div class="list-header">
-        <span class="setting-title" style="margin-left: 12px; margin-top: 8px;">Desktop Settings</span>
+      <div id="cache-options" class="setting-row column">
+        <div class="setting-label">
+          <span class="setting-title">Storage limit</span>
+          <span class="setting-desc">Longer videos keep only a window ahead of where you are</span>
+        </div>
+        <select id="cache-limit" class="select-dropdown">
+          <option value="0">Automatic (8 GB, 3 GB on phones)</option>
+          <option value="1">1 GB</option>
+          <option value="2">2 GB</option>
+          <option value="4">4 GB</option>
+          <option value="8">8 GB</option>
+          <option value="16">16 GB</option>
+        </select>
       </div>
 
-      <div class="setting-row">
+      <!-- Download speed and buffer (used by whole-video loading and faster buffering) -->
+      <div id="loading-options" class="setting-row column">
         <div class="setting-label">
-          <span class="setting-title">Show Copy Icon</span>
+          <span class="setting-title">Parallel downloads</span>
+          <span class="setting-desc">Most pieces of the video loaded at once (whole-video loading and faster buffering). It starts at 2 and adds more only while that makes loading faster</span>
         </div>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-copy-icon" checked>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-label">
-          <span class="setting-title">Show Play Icon</span>
+        <select id="fast-buffering-parallel" class="select-dropdown">
+          <option value="2">2</option>
+          <option value="4">4 (default)</option>
+          <option value="6">6</option>
+          <option value="8">8</option>
+        </select>
+        <div class="setting-label" style="margin-top: 8px;">
+          <span class="setting-title">Buffer ahead</span>
+          <span class="setting-desc">How much video the player keeps ready to play (with whole-video loading the rest waits in the downloaded copy)</span>
         </div>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-play-icon" checked>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-label">
-          <span class="setting-title">Show Download Icon</span>
-          <span class="setting-desc">⬇️ saves the stream as an MP4 file</span>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="toggle-download-icon">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-
-      <div class="setting-row column">
-        <div class="setting-label">
-          <span class="setting-title">Download with</span>
-          <span class="setting-desc">Built-in: no setup, HLS/DASH → one MP4 in the browser. yt-dlp/ffmpeg: needs the native host (see below); also handles sites the built-in one cannot</span>
-        </div>
-        <select id="download-method" class="select-dropdown">
-          <option value="browser">Built-in downloader (MP4)</option>
-          <option value="native">yt-dlp / ffmpeg (native host)</option>
+        <select id="buffer-ahead" class="select-dropdown">
+          <option value="0">Automatic (2 min, 1 min on phones)</option>
+          <option value="60">1 minute</option>
+          <option value="120">2 minutes</option>
+          <option value="300">5 minutes</option>
+          <option value="600">10 minutes</option>
         </select>
       </div>
 
       <div class="setting-row">
         <div class="setting-label">
-          <span class="setting-title">Forward cookies</span>
-          <span class="setting-desc">Send the page's cookies to the player / downloader</span>
+          <span class="setting-title">Faster buffering (without whole-video loading)</span>
+          <span class="setting-desc">When "Load the whole video" is off: loads the next minutes in parallel instead of one piece at a time (HLS / DASH)</span>
         </div>
         <label class="toggle">
-          <input type="checkbox" id="toggle-forward-cookies">
+          <input type="checkbox" id="toggle-fast-buffering" checked>
           <span class="toggle-slider"></span>
         </label>
       </div>
 
-      <div class="setting-row column">
+      <div class="setting-row">
+        <div class="setting-label">
+          <span class="setting-title">Open stream links in the web player</span>
+          <span class="setting-desc">Going to a .m3u8 or .mpd address plays it here instead of downloading or showing text</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-open-stream-links">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-label">
+          <span class="setting-title">… also .mp4 links</span>
+          <span class="setting-desc">Off: clicking an .mp4 link keeps the browser's own behaviour (play or download)</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-open-mp4-links">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </section>
+
+    <!-- ── Button: the floating button and its menu on pages ─────────────── -->
+    <section class="tab-panel" id="panel-menu" role="tabpanel" aria-labelledby="tab-menu" data-panel="menu" hidden>
+      <div class="setting-row column desktop-only">
         <div class="setting-label">
           <span class="setting-title">Click Action</span>
           <span class="setting-desc">What happens when you click a stream</span>
@@ -305,20 +190,105 @@
         </select>
       </div>
 
+      <div class="setting-row column android-only">
+        <div class="setting-label">
+          <span class="setting-title">Click Action</span>
+          <span class="setting-desc">What happens when you tap a stream</span>
+        </div>
+        <select id="android-default-action" class="select-dropdown">
+          <option value="default">Share / open in player</option>
+          <option value="copy">Copy Link</option>
+          <option value="browser">Play in Browser</option>
+        </select>
+      </div>
+
+      <div class="setting-row desktop-only">
+        <div class="setting-label">
+          <span class="setting-title">Show Copy Icon</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-copy-icon" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-row desktop-only">
+        <div class="setting-label">
+          <span class="setting-title">Show Play Icon</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-play-icon" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-row desktop-only">
+        <div class="setting-label">
+          <span class="setting-title">Show Download Icon</span>
+          <span class="setting-desc">⬇️ saves the stream as an MP4 file</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-download-icon">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-row android-only">
+        <div class="setting-label">
+          <span class="setting-title">Show download button</span>
+          <span class="setting-desc">⬇️ saves the stream as an MP4 file (needs free storage of about twice the video's size while downloading)</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="android-download-icon">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-label">
+          <span class="setting-title">Clean stream names</span>
+          <span class="setting-desc">Show readable names instead of raw URLs</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-clean-names" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
       <div class="setting-row column">
         <div class="setting-label">
-          <span class="setting-title">Web Player Engine</span>
+          <span class="setting-title">Floating button</span>
+          <span class="setting-desc">Drag it anywhere on a page (long-press on touch); it remembers the spot per site</span>
         </div>
-        <select id="web-player-engine" class="select-dropdown">
-          <option value="vidstack">Vidstack (HLS / MP4; DASH opens in Shaka)</option>
-          <option value="shaka">Shaka Player (HLS / DASH / MP4, quality &amp; speed menus)</option>
-          <option value="artplayer">ArtPlayer (HLS / DASH / MP4, subtitle offset &amp; size, screenshot, gestures)</option>
+        <select id="button-visibility" class="select-dropdown">
+          <option value="always">Always visible</option>
+          <option value="fade">Fade when idle</option>
+          <option value="never">Hidden (use the toolbar icon)</option>
         </select>
       </div>
 
       <div class="setting-row column">
         <div class="setting-label">
+          <span class="setting-title">Button corner</span>
+          <span class="setting-desc">Applies to all sites and clears dragged positions</span>
+        </div>
+        <select id="button-corner" class="select-dropdown">
+          <option value="bottom-right">Bottom right</option>
+          <option value="bottom-left">Bottom left</option>
+          <option value="top-right">Top right</option>
+          <option value="top-left">Top left</option>
+          <option value="custom" disabled>Custom (dragged)</option>
+        </select>
+        <button id="reset-button-position" class="save-btn">Reset button position</button>
+      </div>
+    </section>
+
+    <!-- ── External: desktop players and yt-dlp/ffmpeg (desktop only) ──────── -->
+    <section class="tab-panel desktop-only" id="panel-external" role="tabpanel" aria-labelledby="tab-external" data-panel="external" hidden>
+      <div class="setting-row column">
+        <div class="setting-label">
           <span class="setting-title">External Player Integration</span>
+          <span class="setting-desc">How 🖥️ opens a stream in VLC / mpv</span>
         </div>
         <select id="external-method" class="select-dropdown">
           <option value="protocol">Protocol Handler (vlc://)</option>
@@ -354,44 +324,72 @@
       <div id="vlc-http-settings" class="setting-row column" style="display: none;">
         <input type="password" id="vlc-http-password" class="text-input" placeholder="VLC Web Interface Password">
       </div>
-    </div>
 
-    <hr class="divider">
-
-    <!-- Whitelist -->
-    <div class="list-section">
-      <div class="list-header">
-        <span class="setting-title">Whitelist</span>
-        <span class="setting-desc">Always detect on these domains</span>
+      <div class="setting-row column">
+        <div class="setting-label">
+          <span class="setting-title">Download with</span>
+          <span class="setting-desc">Built-in: no setup, HLS/DASH → one MP4 in the browser. yt-dlp/ffmpeg: needs the native host (above); also handles sites the built-in one cannot</span>
+        </div>
+        <select id="download-method" class="select-dropdown">
+          <option value="browser">Built-in downloader (MP4)</option>
+          <option value="native">yt-dlp / ffmpeg (native host)</option>
+        </select>
       </div>
-      <textarea id="whitelist" class="domain-list" placeholder="example.com&#10;another-site.org" rows="3"></textarea>
-    </div>
 
-    <!-- Blacklist -->
-    <div class="list-section">
-      <div class="list-header">
-        <span class="setting-title">Blacklist</span>
-        <span class="setting-desc">Never detect on these domains</span>
+      <div class="setting-row">
+        <div class="setting-label">
+          <span class="setting-title">Forward cookies</span>
+          <span class="setting-desc">Send the page's cookies to the player / downloader</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-forward-cookies">
+          <span class="toggle-slider"></span>
+        </label>
       </div>
-      <textarea id="blacklist" class="domain-list" placeholder="noisy-site.com&#10;ads.example.com" rows="3"></textarea>
-      <span class="setting-desc" style="margin-top: 4px;">
-        <code>example.com</code> = site and subdomains · <code>-host.com</code> = exactly that host ·
-        <code>~regex</code> = regular expression · <code>!rule</code> = exception
-      </span>
-      <span id="domain-list-error" class="list-error"></span>
-    </div>
+    </section>
 
-    <!-- Custom detection patterns -->
-    <div class="list-section">
-      <div class="list-header">
-        <span class="setting-title">Custom detection patterns</span>
-        <span class="setting-desc">Treat URLs matching a regex as a stream. One per line: <code>type /regex/flags</code> (types: m3u8, mpd, mp4, ts, video, subtitle)</span>
+    <!-- ── Filters: where to detect, what counts as a stream ──────────────── -->
+    <section class="tab-panel" id="panel-filters" role="tabpanel" aria-labelledby="tab-filters" data-panel="filters" hidden>
+      <div class="setting-row column">
+        <div class="setting-label inline">
+          <span class="setting-title">Max streams per tab</span>
+          <span class="setting-value" id="max-streams-value">50</span>
+        </div>
+        <input type="range" id="max-streams" min="10" max="100" step="5" value="50" class="slider">
       </div>
-      <textarea id="custom-patterns" class="domain-list" placeholder="m3u8 /cdn\.example\.com\/play\/\d+/i&#10;video /\/get_file\//&#10;subtitle /\/captions\//" rows="3" spellcheck="false"></textarea>
-      <span id="custom-patterns-status" class="list-error"></span>
-    </div>
 
-    <button id="save-lists" class="save-btn">Save Lists &amp; Patterns</button>
+      <div class="list-section">
+        <div class="list-header">
+          <span class="setting-title">Whitelist</span>
+          <span class="setting-desc">Always detect on these domains</span>
+        </div>
+        <textarea id="whitelist" class="domain-list" placeholder="example.com&#10;another-site.org" rows="3"></textarea>
+      </div>
+
+      <div class="list-section">
+        <div class="list-header">
+          <span class="setting-title">Blacklist</span>
+          <span class="setting-desc">Never detect on these domains</span>
+        </div>
+        <textarea id="blacklist" class="domain-list" placeholder="noisy-site.com&#10;ads.example.com" rows="3"></textarea>
+        <span class="setting-desc list-hint">
+          <code>example.com</code> = site and subdomains · <code>-host.com</code> = exactly that host ·
+          <code>~regex</code> = regular expression · <code>!rule</code> = exception
+        </span>
+        <span id="domain-list-error" class="list-error"></span>
+      </div>
+
+      <div class="list-section">
+        <div class="list-header">
+          <span class="setting-title">Custom detection patterns</span>
+          <span class="setting-desc">Treat URLs matching a regex as a stream. One per line: <code>type /regex/flags</code> (types: m3u8, mpd, mp4, ts, video, subtitle)</span>
+        </div>
+        <textarea id="custom-patterns" class="domain-list" placeholder="m3u8 /cdn\.example\.com\/play\/\d+/i&#10;video /\/get_file\//&#10;subtitle /\/captions\//" rows="3" spellcheck="false"></textarea>
+        <span id="custom-patterns-status" class="list-error"></span>
+      </div>
+
+      <button id="save-lists" class="save-btn">Save Lists &amp; Patterns</button>
+    </section>
 
     <footer class="popup-footer">
       <span>v1.6</span>

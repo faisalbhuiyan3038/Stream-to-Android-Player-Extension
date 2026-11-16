@@ -276,6 +276,8 @@ sub1.vtt
 
     // ── subtitles ────────────────────────────────────────────
     if (url === '/subs/en.vtt') return send(200, 'text/vtt', 'WEBVTT\n\n00:00.000 --> 00:02.000\nHello\n');
+    // shown for the whole 30 s clip (layout audits take screenshots at any moment)
+    if (url === '/subs/long.srt') return send(200, 'application/x-subrip', '1\n00:00:00,000 --> 00:10:00,000\nA subtitle line of ordinary length\n');
     if (url === '/subs/fr.srt') return send(200, 'application/x-subrip', '1\n00:00:00,000 --> 00:00:02,000\nBonjour\n');
     // Windows-1252 bytes ("Café “quoted”"), no charset: must not turn into U+FFFD
     if (url === '/subs/cp1252.srt') {

@@ -40,6 +40,7 @@ let currentDomain = '';
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
+  initTabs();
   // Load settings and platform directly to avoid background script wake-up race conditions
   const storageResult = await browser.storage.local.get('settings');
   const settings = { ...defaults, ...(storageResult.settings || {}) };
@@ -51,6 +52,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (e) {
     // fallback to default
   }
+  // Shows the .android-only or .desktop-only rows and tabs (popup.css)
+  document.body.classList.add(platform === 'android' ? 'is-android' : 'is-desktop');
 
   // Populate UI
   document.getElementById('toggle-enabled').checked = settings.enabled;
@@ -89,7 +92,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   await initButtonPositionControls();
 
   if (platform === 'android') {
-    document.getElementById('android-settings').style.display = 'block';
     document.getElementById('android-player').value = settings.androidPlayer;
     document.getElementById('android-default-action').value = settings.defaultTapAction;
     document.getElementById('android-player').addEventListener('change', e => saveSettings({ androidPlayer: e.target.value }));
@@ -101,8 +103,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (platform !== 'android') {
-    document.getElementById('desktop-settings').style.display = 'block';
-
     document.getElementById('toggle-copy-icon').checked = settings.showCopyIcon;
     document.getElementById('toggle-play-icon').checked = settings.showPlayIcon;
     document.getElementById('toggle-download-icon').checked = settings.showDownloadIcon;
@@ -483,6 +483,38 @@ async function renderStreamList(tabId, settings, platform) {
     row.appendChild(info);
     row.appendChild(actions);
     list.appendChild(row);
+  }
+}
+
+// ─── Tabs ─────────────────────────────────────────────────────────────────────
+
+// The popup always opens on "Streams". Tabs follow the WAI-ARIA tabs pattern: click, or
+// arrow keys / Home / End while a tab has focus.
+function initTabs() {
+  const tabs = [...document.querySelectorAll('.tabs .tab')];
+  const select = (tab, focus) => {
+    for (const t of tabs) {
+      const on = t === tab;
+      t.setAttribute('aria-selected', String(on));
+      t.tabIndex = on ? 0 : -1;
+      document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+    }
+    if (focus) tab.focus();
+    window.scrollTo(0, 0);
+  };
+  const visible = () => tabs.filter(t => t.offsetParent !== null);
+  for (const tab of tabs) {
+    tab.addEventListener('click', () => select(tab, false));
+    tab.addEventListener('keydown', (e) => {
+      const list = visible();
+      const i = list.indexOf(tab);
+      let next = null;
+      if (e.key === 'ArrowRight') next = list[(i + 1) % list.length];
+      else if (e.key === 'ArrowLeft') next = list[(i - 1 + list.length) % list.length];
+      else if (e.key === 'Home') next = list[0];
+      else if (e.key === 'End') next = list[list.length - 1];
+      if (next) { e.preventDefault(); select(next, true); }
+    });
   }
 }
 

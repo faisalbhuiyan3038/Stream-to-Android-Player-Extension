@@ -241,6 +241,43 @@ test('Shaka page: SRT (cp1252), ASS and TTML subtitles are converted and loaded'
   await page.close();
 });
 
+// Firefox regression: Shaka attached before its UI existed fell back to the browser's native
+// cues for HLS/DASH, which Firefox draws ~10 px high. Shaka must draw them itself, sized to the window.
+test('Shaka page: HLS subtitles are drawn by Shaka UI, sized to the window', async () => {
+  const page = await ctx.newPage();
+  const subs = encodeURIComponent(JSON.stringify([{ url: `${ORIGIN}/subs/long.srt`, label: 'English', lang: 'en' }]));
+  await page.goto(`chrome-extension://${extId}/player-shaka.html?url=${encodeURIComponent(`${ORIGIN}/hls-real/index.m3u8`)}&subs=${subs}`);
+  const font = await until(() => page.evaluate(() => {
+    const span = [...document.querySelectorAll('.shaka-text-container span')].find(s => /ordinary length/.test(s.textContent) && !s.querySelector('span'));
+    return span ? parseFloat(getComputedStyle(span).fontSize) : null;
+  }), { timeout: 15000 });
+  assert.ok(font, 'cue not drawn in .shaka-text-container');
+  const showing = await page.evaluate(() => [...document.getElementById('video').textTracks].filter(t => t.mode === 'showing').length);
+  assert.equal(showing, 0, 'a native text track is showing too');
+  const vmin = await page.evaluate(() => Math.min(innerWidth, innerHeight));
+  assert.ok(font >= vmin * 0.04, `subtitle font ${font}px for a ${vmin}px window`);
+  await page.close();
+});
+
+test('ArtPlayer page: subtitles are sized to the window, and "Subtitle size" scales them', async () => {
+  const page = await ctx.newPage();
+  const subs = encodeURIComponent(JSON.stringify([{ url: `${ORIGIN}/subs/long.srt`, label: 'English', lang: 'en' }]));
+  await page.goto(`chrome-extension://${extId}/player-art.html?url=${encodeURIComponent(`${ORIGIN}/hls-real/index.m3u8`)}&subs=${subs}`);
+  const fontOf = () => page.evaluate(() => {
+    const el = [...document.querySelectorAll('.art-subtitle *')].find(e => /ordinary length/.test(e.textContent) && !e.children.length);
+    return el && el.getBoundingClientRect().height ? parseFloat(getComputedStyle(el).fontSize) : null;
+  });
+  const font = await until(fontOf, { timeout: 15000 });
+  assert.ok(font, 'cue not drawn');
+  const vmin = await page.evaluate(() => Math.min(innerWidth, innerHeight));
+  assert.ok(font >= vmin * 0.04, `subtitle font ${font}px for a ${vmin}px window`);
+  // the size setting multiplies the base size (as "Large" does)
+  await page.evaluate(() => window._art.subtitle.style({ fontSize: 'calc(var(--art-subtitle-font-size, 20px) * 1.3)' }));
+  const large = await until(async () => { const f = await fontOf(); return f && f > font * 1.2 ? f : null; }, { timeout: 3000 });
+  assert.ok(large, `size setting did not scale the subtitles (${font}px)`);
+  await page.close();
+});
+
 test('ArtPlayer page: SRT (cp1252), ASS and TTML subtitles converted, drawn with italics kept, "c" cycles them', async () => {
   const page = await ctx.newPage();
   await page.goto(`chrome-extension://${extId}/player-art.html?${subsQuery()}`);
@@ -447,6 +484,7 @@ test('custom detection patterns make an unrecognised URL a stream (and the popup
   assert.ok(await until(async () => /api/.test(await popup.inputValue('#custom-patterns'))), 'saved patterns not shown');
   // the status line is filled once the popup has finished starting
   await until(async () => /OK/.test(await popup.textContent('#custom-patterns-status')));
+  await popup.click('#tab-filters');
   await popup.fill('#custom-patterns', 'm3u8 /ok/\nbogus /x/\nvideo /([/');
   const status = await popup.textContent('#custom-patterns-status');
   assert.match(status, /Line 2: Unknown type/);
@@ -1106,6 +1144,7 @@ test('popup: parallel downloads stays visible with faster buffering off, and the
   await setSettings({ cacheWholeVideo: true, fastBuffering: true, fastBufferingParallel: 4 });
   const popup = await ctx.newPage();
   await popup.goto(`chrome-extension://${extId}/popup.html`);
+  await popup.click('#tab-player');
   await popup.click('label.toggle:has(#toggle-fast-buffering)'); // the switch drawn over the checkbox
   assert.equal(await popup.isChecked('#toggle-fast-buffering'), false);
   assert.equal(await popup.isVisible('#fast-buffering-parallel'), true);
@@ -1246,6 +1285,7 @@ test('button: popup corner select and reset change the position', async () => {
   const page = await pageWithButton();
   const popup = await ctx.newPage();
   await popup.goto(`chrome-extension://${extId}/popup.html`);
+  await popup.click('#tab-menu');
   await popup.selectOption('#button-corner', 'top-left');
   await sleep(500);
   const box = await page.locator('#video-handler-button').boundingBox();

@@ -9,6 +9,7 @@
     "test:e2e": "node --test --test-concurrency=1 tests/e2e/chromium.test.js",
     "test:e2e:mobile": "node --test --test-concurrency=1 tests/e2e/mobile.test.js",
     "audit:mobile": "node tests/e2e/mobile-audit.js",
+    "audit:firefox": "node tests/e2e/firefox-audit.js",
     "test:e2e:firefox": "node --test --test-concurrency=1 tests/e2e/firefox.test.js",
     "build:vidstack": "esbuild src/player.js --bundle --minify --format=esm --outfile=player.bundle.js",
     "build:shaka": "esbuild src/player-shaka.js --bundle --minify --format=iife --global-name=ShakaInit --outfile=player-shaka.bundle.js",

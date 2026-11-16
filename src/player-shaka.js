@@ -152,8 +152,12 @@ async function init() {
   }
 
   const player = new shaka.Player();
-  await player.attach(video);
+  // The overlay first: it gives the player its video container, and only with one does Shaka
+  // draw subtitles itself (UITextDisplayer). Attached before that, HLS/DASH subtitles were left
+  // to the browser's native cues, which Firefox draws tiny (~10 px) where Chrome uses ~5% of
+  // the video height.
   const ui = new shaka.ui.Overlay(player, container, video);
+  await player.attach(video);
   ui.configure({
     seekOnTaps: true,              // double-tap left/right = -/+ 10 s
     tapSeekDistance: 10,
