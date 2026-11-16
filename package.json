@@ -1,6 +1,6 @@
 {
   "name": "stream-to-android-player-extension",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Browser extension (Chrome/Edge/Firefox, desktop + Android) that detects streaming videos and sends them to an external player.",
   "main": "background.js",
   "scripts": {

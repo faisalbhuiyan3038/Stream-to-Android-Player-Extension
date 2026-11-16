@@ -1,5 +1,5 @@
 Permission justifications for store review (Chrome Web Store "Privacy practices" tab, addons.mozilla.org review notes).
-Plain text on purpose: paste each block into the matching field. Applies to version 1.6.
+Plain text on purpose: paste each block into the matching field. Applies to version 1.7.
 
 ==================================================
 SINGLE PURPOSE
@@ -23,7 +23,7 @@ tabs
 Used to read the URL and title of the tab in which a stream was found (the title becomes the stream's display name and the downloaded file name; the URL is sent as the Referer and is used to drop streams of pages the user has left), to open the built-in player, downloader and player links in a new tab, to show the current tab's streams in the popup, and to clear a tab's list when it is closed or navigates away.
 
 storage
-Stores the user's settings, the list of streams detected per tab (cleared when the browser starts or the tab closes) and the floating button position. Data is stored locally only. (The built-in player's resume positions are kept in the extension page's own localStorage, also local.)
+Stores the user's settings, the list of streams detected per tab (cleared when the browser starts or the tab closes) and the floating button position. Data is stored locally only. (The built-in player's resume positions are kept in the extension page's own localStorage, also local. While a video plays in the built-in player, the parts of that video it has loaded are kept in the player page's own IndexedDB so it can play and save them without downloading again; that copy is deleted when the player tab closes and is never sent anywhere.)
 
 notifications
 Shows a notification when an action the user started fails, for example when the external player could not be launched, the native host is not installed, or a download could not start. (Used by the notify() function in background.js.)
@@ -57,6 +57,9 @@ The extension does not collect, sell or send any user data to the developer or a
 Data categories to tick: "Web history" and "Website content" (handled locally only, to provide the single purpose). Certify: not sold, not used for unrelated purposes, not used for creditworthiness or lending.
 
 ==================================================
-NOTE FOR REVIEWERS (version 1.6)
+NOTE FOR REVIEWERS (version 1.7)
 ==================================================
+No new permissions in 1.7. The only manifest change is a third built-in player page (player-art.html) added to web_accessible_resources next to the two existing player pages, so the stream button can open it like the others. All player code (including ArtPlayer) is bundled in the package.
+
+From version 1.6:
 The "downloads" permission flagged in version 1.4 has been removed: videos are saved through a normal browser download link created by the extension's download page, which needs no permission. The "notifications" permission is now used for the error alerts described above.

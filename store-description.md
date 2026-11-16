@@ -3,6 +3,15 @@ Firefox addon store supports some markdown, so only those are used below. Chrome
 A browser extension to detect streaming videos (M3U8, MPD, MP4) and send them to your preferred media player on Android and Windows, play them in the browser, or save them as MP4. Supports VLC, MPV, MX Player, and other players with command-line arguments.
 
 **Changelog**
+1.7
+- New: ArtPlayer, a third built-in player. It has subtitle size and timing (offset) settings, screenshots, picture-in-picture, and phone gestures (double-tap to skip, swipe to seek, long-press to fast forward, screen lock).
+- The built-in players now load the whole video while you watch, so playback no longer stops to wait for the network. It keeps going while paused or in a background tab and keeps retrying when the site is slow.
+- New Save button in the player's controls: save the video as MP4 at any time. Once it is fully loaded it saves right away without downloading again; while loading you can save the whole video when it finishes, or just the part loaded so far.
+- New settings: turn whole-video loading on/off, storage limit, number of parallel downloads.
+- Firefox: subtitles in the built-in player were too small; they are now a readable size that grows with the screen.
+- Firefox: the toolbar popup opened far too big; it now has a proper size on desktop and fills the screen on phones.
+- The popup is now organised into tabs (Streams, Player, Button, External, Filters).
+- Many fixes and improvements.
 1.6
 - Download videos as MP4 right in the browser, no extra setup needed. Works on Android too.
 - Choose the quality and audio language before downloading. Subtitles are saved inside the MP4 (and optionally as .srt files).
@@ -63,11 +72,12 @@ A browser extension to detect streaming videos (M3U8, MPD, MP4) and send them to
   - **Native Messaging** (browser-to-app communication).
   - **Protocol Handlers** (e.g., vlc://, mpv://).
   - **VLC HTTP Interface** (remote control).
-- **In-Browser Playback**: Shaka Player (HLS/DASH/MP4), ArtPlayer (HLS/DASH/MP4) and Vidstack, made for both desktop and phones.
+- **In-Browser Playback**: Shaka Player (HLS/DASH/MP4), ArtPlayer (HLS/DASH/MP4) and Vidstack, made for both desktop and phones. They load the whole video while you watch, so playback does not stop to wait for the network.
 
 **Download**
 - Save videos as **MP4** right in the browser, on desktop and Android. No extra setup needed.
 - Choose the quality and audio language first.
+- Or press Save in the built-in player: the video it already loaded is saved without downloading it again.
 - On desktop you can also download with yt-dlp or ffmpeg through the native host.
 
 **Platform Support**
@@ -95,6 +105,7 @@ A browser extension to detect streaming videos (M3U8, MPD, MP4) and send them to
   - **Subtitles**: VTT, SRT, ASS and TTML in the built-in players, and sent to VLC/MPV.
   - **Quality Selection**: Auto-detected from stream metadata; pick one before playing or downloading.
   - **Resume**: The built-in player remembers where you stopped.
+  - **Whole-video loading**: On/off, storage limit and number of parallel downloads.
 
 **Installation**
 1. **Browser Extension**:
