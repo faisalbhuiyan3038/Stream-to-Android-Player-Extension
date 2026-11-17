@@ -11,6 +11,8 @@ import { registerCacheScheme, shakaPlan, pickVariant } from './cache-shaka.mjs';
 import { desiredHeight } from './cache-hls.mjs';
 import { createSaveControl, throttle } from './cache-ui.mjs';
 import { startFileCache, onComplete, saveCached, attachSaver } from './player-cache.mjs';
+import { createAudioFx, prepareVideoForAudio } from './audio-fx.mjs';
+import { createAudioControl, attachAudioKeys } from './audio-ui.mjs';
 
 async function readSettings() {
   try {
@@ -151,6 +153,13 @@ async function init() {
     return;
   }
 
+  // Audio effects (normalizer, dialogue boost, volume boost…); Firefox needs the crossorigin
+  // attribute before a plain file loads, or Web Audio would get silence from it
+  prepareVideoForAudio(video);
+  const audio = createAudioFx(video, { notify: toast });
+  window._audioFx = audio;
+  attachAudioKeys(audio);
+
   const player = new shaka.Player();
   // The overlay first: it gives the player its video container, and only with one does Shaka
   // draw subtitles itself (UITextDisplayer). Attached before that, HLS/DASH subtitles were left
@@ -171,6 +180,10 @@ async function init() {
   // Exposed for the browser tests (and handy in the console)
   window._shakaPlayer = player;
   window._shakaUi = ui;
+
+  // The Audio button in the control bar, before Save / fullscreen
+  const audioUi = createAudioControl({ fx: audio, menuHost: container });
+  addControl('sap_audio', audioUi.el);
 
   player.addEventListener('error', (event) => {
     const detail = event.detail;
@@ -235,6 +248,21 @@ async function init() {
     errorEl.textContent = `Failed to load: ${e.message || JSON.stringify(e)}`;
   }
 
+  // A Shaka UI element in the control bar, before fullscreen / the overflow menu
+  function addControl(name, el) {
+    class Control extends shaka.ui.Element {
+      constructor(parent, controls) {
+        super(parent, controls);
+        parent.appendChild(el);
+      }
+    }
+    shaka.ui.Controls.registerElement(name, { create: (root, controls) => new Control(root, controls) });
+    const list = ui.getConfiguration().controlPanelElements.filter(x => x !== name);
+    const at = ['fullscreen', 'overflow_menu'].map(x => list.indexOf(x)).find(i => i >= 0);
+    list.splice(at == null ? list.length : at, 0, name);
+    ui.configure({ controlPanelElements: list });
+  }
+
   // The download follows the playing variant (a quality or language change starts on the new
   // one; what is already in stays).
   function startCache() {
@@ -254,19 +282,7 @@ async function init() {
     let saver = null;
     badge = createSaveControl({ onSave: (mode, b) => saver(mode, b), canSavePart: () => !filePlan, menuHost: container });
     saver = attachSaver(cache, badge, saveNow);
-    // A Shaka UI element in the control bar, before fullscreen
-    const control = badge.el;
-    class SaveElement extends shaka.ui.Element {
-      constructor(parent, controls) {
-        super(parent, controls);
-        parent.appendChild(control);
-      }
-    }
-    shaka.ui.Controls.registerElement('sap_save', { create: (root, controls) => new SaveElement(root, controls) });
-    const list = ui.getConfiguration().controlPanelElements.filter(x => x !== 'sap_save');
-    const at = ['fullscreen', 'overflow_menu'].map(x => list.indexOf(x)).find(i => i >= 0);
-    list.splice(at == null ? list.length : at, 0, 'sap_save');
-    ui.configure({ controlPanelElements: list });
+    addControl('sap_save', badge.el);
     badge.update(cache.progress());
 
     if (!player.getManifest()) {

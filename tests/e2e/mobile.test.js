@@ -79,6 +79,56 @@ for (const [engine, file] of [['Vidstack', 'player.html'], ['Shaka', 'player-sha
   }
 }
 
+for (const [engine, file] of [['Vidstack', 'player.html'], ['Shaka', 'player-shaka.html'], ['ArtPlayer', 'player-art.html']]) {
+  test(`${engine}: the Audio panel opens with a tap, stays on screen, thumb-sized (portrait and landscape)`, async () => {
+    for (const [orient, view] of Object.entries(VIEWS)) {
+      const page = await openAt(playerUrl(file), view);
+      await until(() => page.evaluate(() => { const s = window._subtitleStatus || []; return !!document.querySelector('.sap-audio-btn') && s.length === 1 && s[0].via !== 'pending'; }), { timeout: 15000 });
+      // the button where a finger would hit it (a tap on the picture shows the controls if hidden)
+      const reachable = () => page.evaluate(() => {
+        const btn = document.querySelector('.sap-audio-btn');
+        const r = btn.getBoundingClientRect();
+        const x = r.x + r.width / 2; const y = r.y + r.height / 2;
+        // faded-out controls are still hit-testable, but a tap on them only shows them
+        let opacity = 1;
+        for (let e = btn; e && e.nodeType === 1; e = e.parentElement || (e.getRootNode() && e.getRootNode().host)) opacity *= +getComputedStyle(e).opacity;
+        return opacity > 0.8 && btn.contains(document.elementFromPoint(x, y)) ? { x, y } : null;
+      });
+      let b = await reachable();
+      for (let i = 0; !b && i < 3; i++) {
+        await page.touchscreen.tap(view.width / 2, view.height / 3);
+        await sleep(500);
+        b = await reachable();
+      }
+      assert.ok(b, `${orient}: Audio button not on screen / covered`);
+      await page.touchscreen.tap(b.x, b.y);
+      // a tap on a bar that is still fading in only shows it (as for a person): tap again
+      if (!await until(() => page.isVisible('.sap-audio-menu'), { timeout: 1000 })) {
+        const again = await reachable();
+        if (again) await page.touchscreen.tap(again.x, again.y);
+      }
+      assert.ok(await until(() => page.isVisible('.sap-audio-menu')), `${orient}: panel did not open`);
+      const box = await page.evaluate(() => { const r = document.querySelector('.sap-audio-menu').getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom }; });
+      assert.ok(box.l >= 0 && box.t >= 0 && box.r <= view.width && box.b <= view.height, `${orient}: panel off screen ${JSON.stringify(box)}`);
+      const r = await page.evaluate(measure, MIN);
+      assert.equal(r.overflowX, false, `${orient}: horizontal overflow`);
+      // the panel's own controls (the players' bars are checked by the layout tests above)
+      const small = await page.evaluate((min) => [...document.querySelectorAll('.sap-audio-menu button, .sap-audio-menu input, .sap-audio-menu label')]
+        .filter(e => !e.hidden && e.getBoundingClientRect().height > 0)
+        .map(e => { const q = (e.closest('label') && e.tagName === 'INPUT' && e.type === 'checkbox' ? e.closest('label') : e).getBoundingClientRect(); return { n: e.dataset.key || e.dataset.preset || e.textContent.trim().slice(0, 20), w: Math.round(q.width), h: Math.round(q.height) }; })
+        .filter(x => x.w < min || x.h < min), MIN);
+      assert.deepEqual(small, [], `${orient}: panel controls smaller than 40px`);
+      // a preset chosen by tap
+      const chip = await page.evaluate(() => { const e = document.querySelector('.sap-audio-menu [data-preset="cinema"]'); e.scrollIntoView({ block: 'nearest' }); const q = e.getBoundingClientRect(); return { x: q.x + q.width / 2, y: q.y + q.height / 2 }; });
+      await page.touchscreen.tap(chip.x, chip.y);
+      assert.equal(await until(() => page.evaluate(() => window._audioFx.settings.preset === 'cinema')), true, `${orient}: tap on Cinema`);
+      await page.evaluate(() => window._audioFx.set({ preset: 'off' }));
+      await sleep(400);
+      await page.close();
+    }
+  });
+}
+
 test('popup on a phone: no horizontal overflow, thumb-sized controls (portrait and landscape)', async () => {
   for (const view of Object.values(VIEWS)) {
     const page = await openAt(`chrome-extension://${extId}/popup.html`, view);

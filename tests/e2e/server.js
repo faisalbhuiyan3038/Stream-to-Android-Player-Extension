@@ -13,6 +13,30 @@ function page(title, body) {
   return `<html><head><title>${title}</title></head><body>${body}</body></html>`;
 }
 
+// 16-bit stereo WAV: 3 s loud then 12 s quiet, a voice-like mix of partials with syllable-rate
+// modulation (src/audio-dsp.mjs treats it as speech)
+let levelsCache = null;
+function levelsWav() {
+  if (levelsCache) return levelsCache;
+  const rate = 44100;
+  const n = 15 * rate;
+  const b = Buffer.alloc(44 + n * 4);
+  b.write('RIFF', 0); b.writeUInt32LE(36 + n * 4, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16);
+  b.writeUInt16LE(1, 20); b.writeUInt16LE(2, 22); b.writeUInt32LE(rate, 24); b.writeUInt32LE(rate * 4, 28);
+  b.writeUInt16LE(4, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(n * 4, 40);
+  for (let i = 0; i < n; i++) {
+    const t = i / rate;
+    const amp = t < 3 ? 0.5 : 0.0158;
+    const env = 0.6 + 0.4 * Math.sin(2 * Math.PI * 4 * t);
+    const v = amp * env * (0.5 * Math.sin(2 * Math.PI * 450 * t) + 0.3 * Math.sin(2 * Math.PI * 1100 * t) + 0.2 * Math.sin(2 * Math.PI * 2300 * t));
+    const x = Math.round(v * 32767);
+    b.writeInt16LE(x, 44 + i * 4);
+    b.writeInt16LE(x, 46 + i * 4);
+  }
+  levelsCache = b;
+  return b;
+}
+
 function startServer() {
   const log = { secureReferers: [], cookies: [], segments: [], big: [], flaky: {} };
   const server = http.createServer((req, res) => {
@@ -239,6 +263,21 @@ sub1.vtt
         });
       }
       return send(200, 'video/webm', data, { 'accept-ranges': 'bytes' });
+    }
+    // Audio effects tests: 3 s loud (−6 dBFS) then 12 s quiet (−36 dBFS) voice-like sound, served
+    // WITHOUT CORS headers (extension pages may read it anyway; Firefox needs crossorigin)
+    if (url === '/media/levels.wav') {
+      const data = levelsWav();
+      const type = 'audio/wav';
+      const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+      if (range) {
+        const start = range[1] ? +range[1] : 0;
+        const end = range[2] ? Math.min(+range[2], data.length - 1) : data.length - 1;
+        res.writeHead(206, { 'content-type': type, 'accept-ranges': 'bytes', 'content-range': `bytes ${start}-${end}/${data.length}` });
+        return res.end(data.subarray(start, end + 1));
+      }
+      res.writeHead(200, { 'content-type': type, 'accept-ranges': 'bytes' });
+      return res.end(data);
     }
     if (url.startsWith('/media/')) return send(200, 'video/mp4', 'x');
     if (url === '/live/chunk0001.ts') return send(200, 'video/mp2t', 'x');

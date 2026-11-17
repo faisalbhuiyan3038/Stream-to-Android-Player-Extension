@@ -190,6 +190,83 @@ media-community-skin .sap-cache { margin: 0 2px; }
 .shaka-controls-button-panel .sap-cache .sap-save { width: 48px; height: 48px; }
 #art .art-control.art-control-sap-save { padding: 0; }
 
+/* Audio effects control (src/audio-ui.mjs): a button in each player's control bar and a panel
+   above it; a small dot on the icon shows that effects are on (blue: waiting to start). */
+.sap-audio { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.sap-audio .sap-audio-btn {
+  width: 40px;
+  height: 40px;
+  padding: 6px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.sap-audio .sap-audio-btn:hover, .sap-audio .sap-audio-btn:focus-visible { background: rgba(255, 255, 255, 0.12); outline: none; }
+.sap-audio svg { width: 28px; height: 28px; }
+.sap-audio svg path { fill: none !important; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.sap-audio svg .sap-audio-dot { fill: #4caf50 !important; stroke: none; display: none; }
+.sap-audio[data-active="on"] svg .sap-audio-dot { display: inline; }
+.sap-audio[data-active="pending"] svg .sap-audio-dot { display: inline; fill: #64b5f6 !important; }
+
+.sap-audio-menu {
+  position: absolute;
+  z-index: 2147483000;
+  box-sizing: border-box;
+  width: min(340px, calc(100% - 16px));
+  max-height: calc(100% - 72px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(20, 20, 28, 0.95);
+  color: #fff;
+  font: 13px/1.35 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+.sap-audio-menu[hidden], .sap-audio-menu [hidden] { display: none; }
+.sap-audio-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.sap-audio-head strong { font-size: 14px; }
+.sap-audio-status { color: #a5d6a7; font-size: 12px; text-align: right; }
+.sap-audio-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.sap-audio-preset {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 16px;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+.sap-audio-preset:hover { background: rgba(255, 255, 255, 0.1); }
+.sap-audio-preset[aria-checked="true"] { background: #4caf50; border-color: #4caf50; font-weight: 600; }
+.sap-audio-hint { margin: 0; color: rgba(255, 255, 255, 0.7); font-size: 12px; min-height: 16px; }
+.sap-audio-row { display: flex; flex-direction: column; gap: 2px; }
+.sap-audio-row span { display: flex; justify-content: space-between; color: rgba(255, 255, 255, 0.9); }
+.sap-audio-row output { color: #fff; font-variant-numeric: tabular-nums; font-weight: 600; }
+.sap-audio-row input[type="range"] { width: 100%; margin: 0; height: 24px; accent-color: #4caf50; cursor: pointer; }
+.sap-audio-check { display: flex; align-items: center; gap: 8px; min-height: 28px; cursor: pointer; }
+.sap-audio-check input { width: 18px; height: 18px; margin: 0; accent-color: #4caf50; }
+@media (pointer: coarse) {
+  .sap-audio .sap-audio-btn { width: 44px; height: 44px; }
+  .sap-audio-preset { min-height: 44px; padding: 0 14px; border-radius: 22px; }
+  .sap-audio-row input[type="range"] { height: 44px; }
+  .sap-audio-check { min-height: 44px; }
+  .sap-audio-check input { width: 24px; height: 24px; }
+}
+media-community-skin .sap-audio { margin: 0 2px; }
+.shaka-controls-button-panel .sap-audio .sap-audio-btn { width: 48px; height: 48px; }
+#art .art-control.art-control-sap-audio { padding: 0; }
+
 /* ── ArtPlayer page ─────────────────────────────────────────────────────── */
 #art {
   position: fixed;
@@ -220,6 +297,11 @@ media-community-skin .sap-cache { margin: 0 2px; }
   #art .art-video-player.art-control-show .art-subtitle,
   #art .art-video-player.art-hover .art-subtitle { bottom: calc(var(--art-control-height) * 2 + 16px); }
   #art .art-setting-item, #art .art-selector-item { min-height: 44px; }
+}
+/* Narrow phones: the volume slider makes way for the Audio button (phones have volume keys; the
+   Audio panel's boost still works) — otherwise the right-hand controls wrap off the screen */
+@media (pointer: coarse) and (max-width: 480px) {
+  #art .art-control-volume { display: none; }
 }
 /* players style the SVGs in their control bars; the ring and arrow are strokes only */
 .sap-cache svg, .sap-cache svg circle, .sap-cache svg path { fill: none !important; }

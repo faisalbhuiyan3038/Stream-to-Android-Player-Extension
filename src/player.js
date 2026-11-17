@@ -13,6 +13,8 @@ import { openPlayerCache } from './stream-cache.mjs';
 import { createCacheLoader, hlsPlan, pickLevelIndex, desiredHeight } from './cache-hls.mjs';
 import { createSaveControl, throttle } from './cache-ui.mjs';
 import { startFileCache, onComplete, saveCached, attachSaver } from './player-cache.mjs';
+import { createAudioFx } from './audio-fx.mjs';
+import { createAudioControl, attachAudioKeys } from './audio-ui.mjs';
 
 // The extension's settings (player pages are extension pages, so storage is available)
 async function readSettings() {
@@ -194,6 +196,16 @@ async function start() {
       });
       lockOrientationOnFullscreen(video);
     }
+    // Audio effects (normalizer, dialogue boost, volume boost…); <media-player crossorigin>
+    // already makes plain files readable by Web Audio in Firefox. Audio-only files get an <audio>.
+    const media = video || player.querySelector('audio');
+    if (media) {
+      const audio = createAudioFx(media, { notify: toast });
+      window._audioFx = audio;
+      attachAudioKeys(audio);
+      const audioUi = createAudioControl({ fx: audio, menuHost: player });
+      mountInSkin(audioUi.el, () => true, 'sap-audio');
+    }
     if (cache && video) startCacheUi(video);
     addSubtitles().finally(() => {
       player.play().catch((e) => {
@@ -206,7 +218,8 @@ async function start() {
     let saver = null;
     badge = createSaveControl({ onSave: (mode, b) => saver(mode, b), canSavePart: () => !filePlan, menuHost: player });
     saver = attachSaver(cache, badge, saveNow);
-    mountInSkin(badge.el);
+    const saveEl = badge.el;
+    mountInSkin(saveEl, () => !!badge && badge.el === saveEl);
     badge.update(cache.progress());
     if (streamType === 'hls') {
       const onTime = () => cache.setPosition(video.currentTime);
@@ -230,13 +243,15 @@ async function start() {
 
   // The Save control goes into the skin's bottom control row, before picture-in-picture (put back
   // if the skin re-renders that row)
-  function mountInSkin(el) {
+  // (the Audio button goes before Save)
+  function mountInSkin(el, wanted, kind = 'sap-save') {
     const insert = () => {
-      if (el.isConnected || !badge || badge.el !== el) return;
+      if (el.isConnected || !wanted()) return;
       const groups = player.querySelectorAll('media-community-skin [part~="controls-group"]');
       const group = groups[groups.length - 1];
       if (!group) return;
-      group.insertBefore(el, group.querySelector('media-pip-button, media-fullscreen-button'));
+      const before = kind === 'sap-audio' ? '.sap-cache, media-pip-button, media-fullscreen-button' : 'media-pip-button, media-fullscreen-button';
+      group.insertBefore(el, group.querySelector(before));
     };
     insert();
     new MutationObserver(insert).observe(player, { childList: true, subtree: true });

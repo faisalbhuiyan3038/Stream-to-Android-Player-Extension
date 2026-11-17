@@ -26,6 +26,7 @@ const EXTENSION_FILES = [
   'download.css',
   'download.bundle.js',
   'timer-worker.js',
+  'audio-worklet.bundle.js',
   'icons',
   'LICENSE.md'
 ];

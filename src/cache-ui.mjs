@@ -6,6 +6,8 @@
 //   onSave(mode, button): 'whole' | 'partial'. canSavePart(): whether "Loaded part" is offered.
 //   menuHost: the element the menu is attached to (the one that goes fullscreen).
 
+import { createPopover } from './player-popover.mjs';
+
 const MB = 1048576;
 const size = n => n >= 1024 * MB ? `${(n / 1024 / MB).toFixed(1)} GB` : n >= 10 * MB ? `${Math.round(n / MB)} MB` : `${(n / MB).toFixed(1)} MB`;
 const SVG = 'http://www.w3.org/2000/svg';
@@ -31,10 +33,8 @@ export function createSaveControl({ onSave, canSavePart = () => true, menuHost =
   btn.appendChild(icon());
   el.appendChild(btn);
 
-  if (menuHost !== document.body && getComputedStyle(menuHost).position === 'static') menuHost.style.position = 'relative';
-  const menu = document.createElement('div');
-  menu.className = 'sap-save-menu';
-  menu.hidden = true;
+  const pop = createPopover({ owner: el, anchor: btn, menuHost, className: 'sap-save-menu' });
+  const menu = pop.menu;
   const status = document.createElement('p');
   status.className = 'sap-save-status';
   const mk = (label, cls) => {
@@ -48,7 +48,6 @@ export function createSaveControl({ onSave, canSavePart = () => true, menuHost =
   const part = mk('Save loaded part', 'sap-save-part');
   const cancel = mk('Don’t save', 'sap-save-cancel');
   menu.append(status, whole, part, cancel);
-  menuHost.appendChild(menu);
 
   let last = null;
   let pending = false;
@@ -64,12 +63,6 @@ export function createSaveControl({ onSave, canSavePart = () => true, menuHost =
     return `Loading whole video ${pct}%${p.retrying ? ' · retrying' : speed}`;
   };
 
-  const place = () => {
-    const host = menuHost.getBoundingClientRect();
-    const r = btn.getBoundingClientRect();
-    menu.style.right = `${Math.max(8, host.right - r.right)}px`;
-    menu.style.bottom = `${Math.max(8, host.bottom - r.top + 8)}px`;
-  };
   const render = () => {
     const p = last || {};
     const pct = pctOf(p);
@@ -82,13 +75,12 @@ export function createSaveControl({ onSave, canSavePart = () => true, menuHost =
     whole.hidden = pending || !!p.complete;
     part.hidden = pending || !!p.complete || !canSavePart();
     cancel.hidden = !pending;
-    if (!menu.hidden) place();
+    if (!menu.hidden) pop.place();
   };
-  const close = () => { menu.hidden = true; };
+  const close = () => pop.close();
   const open = () => {
     render();
-    menu.hidden = false;
-    place();
+    pop.open();
   };
   const fire = (mode, b) => {
     close();
@@ -104,12 +96,6 @@ export function createSaveControl({ onSave, canSavePart = () => true, menuHost =
   whole.addEventListener('click', (e) => { e.stopPropagation(); fire('whole', whole); });
   part.addEventListener('click', (e) => { e.stopPropagation(); fire('partial', part); });
   cancel.addEventListener('click', (e) => { e.stopPropagation(); api.pending = false; close(); });
-  // keep taps on the menu from reaching the player (play/pause, seek gestures)
-  for (const ev of ['click', 'pointerdown', 'pointerup', 'touchstart', 'touchend', 'dblclick']) menu.addEventListener(ev, e => e.stopPropagation());
-  const outside = (e) => { if (!menu.hidden && !menu.contains(e.target) && !el.contains(e.target)) close(); };
-  document.addEventListener('pointerdown', outside, true);
-  const esc = (e) => { if (e.key === 'Escape') close(); };
-  document.addEventListener('keydown', esc);
 
   const api = {
     el,
@@ -125,9 +111,7 @@ export function createSaveControl({ onSave, canSavePart = () => true, menuHost =
       render();
     },
     destroy() {
-      document.removeEventListener('pointerdown', outside, true);
-      document.removeEventListener('keydown', esc);
-      menu.remove();
+      pop.destroy();
       el.remove();
     }
   };

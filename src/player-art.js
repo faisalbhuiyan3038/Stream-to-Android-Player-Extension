@@ -17,6 +17,8 @@ import { createCacheLoader, hlsPlan, pickLevelIndex, desiredHeight } from './cac
 import { registerCacheScheme, shakaPlan, pickVariant } from './cache-shaka.mjs';
 import { createSaveControl, throttle } from './cache-ui.mjs';
 import { startFileCache, onComplete, saveCached, attachSaver } from './player-cache.mjs';
+import { createAudioFx, needsCrossOriginAttr } from './audio-fx.mjs';
+import { createAudioControl, attachAudioKeys } from './audio-ui.mjs';
 
 async function readSettings() {
   try {
@@ -238,6 +240,9 @@ async function main() {
     mutex: true,
     backdrop: true,
     playsInline: true,
+    // Firefox: a plain cross-origin file needs crossorigin for the audio effects (Web Audio gets
+    // silence without it); extension pages are allowed to read it, CORS headers or not
+    ...(needsCrossOriginAttr() ? { moreVideoAttr: { controls: false, preload: 'auto', crossOrigin: 'anonymous' } } : {}),
     autoPlayback: false, // resume is ours (shared with the other players)
     autoOrientation: true,
     airplay: false,
@@ -342,6 +347,10 @@ async function main() {
     }
   });
   window._art = art;
+  // Audio effects (normalizer, dialogue boost, volume boost…)
+  const audio = createAudioFx(art.video, { notify: (text) => { art.notice.show = text; } });
+  window._audioFx = audio;
+  attachAudioKeys(audio);
   art.on('destroy', () => {
     if (art.hls) art.hls.destroy();
     if (art.mpd) art.mpd.destroy();
@@ -543,6 +552,8 @@ async function main() {
       });
     }
 
+    const audioUi = createAudioControl({ fx: audio, menuHost: art.template.$player });
+    art.controls.add({ name: 'sap-audio', position: 'right', index: 4, html: audioUi.el });
     if (cache) startCacheUi(video);
 
     await loadPageSubtitles();

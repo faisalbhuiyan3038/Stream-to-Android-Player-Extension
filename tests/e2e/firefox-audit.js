@@ -32,13 +32,19 @@ function pagesFor(base) {
   const subs = encodeURIComponent(JSON.stringify([{ url: `${ORIGIN}/subs/long.srt`, label: 'English', lang: 'en' }]));
   const hls = encodeURIComponent(`${ORIGIN}/hls-real/index.m3u8`);
   const file = encodeURIComponent(`${ORIGIN}/media/real.webm`);
+  const levels = encodeURIComponent('http://127.0.0.1:8099/media/levels.wav');
+  const master = encodeURIComponent(`${ORIGIN}/hls-real/master.m3u8`);
   return {
     'shaka-hls': `${base}/player-shaka.html?url=${hls}&subs=${subs}`,
     'shaka-file': `${base}/player-shaka.html?url=${file}&subs=${subs}`,
     'vidstack-hls': `${base}/player.html?url=${hls}&subs=${subs}`,
     'art-hls': `${base}/player-art.html?url=${hls}&subs=${subs}`,
     'popup-tab': `${base}/popup.html`,
-    download: `${base}/download.html?url=${hls}&title=Clip&subs=${subs}`
+    download: `${base}/download.html?url=${hls}&title=Clip&subs=${subs}`,
+    // audio effects: a cross-origin WAV without CORS headers (3 s loud, then quiet) and HLS (MSE)
+    'audio-shaka-file': `${base}/player-shaka.html?url=${levels}&audit_audio=dialogue`,
+    'audio-art-file': `${base}/player-art.html?url=${levels}&audit_audio=dialogue`,
+    'audio-vidstack-hls': `${base}/player.html?url=${master}&audit_audio=music`
   };
 }
 
@@ -76,7 +82,7 @@ async function firefoxRun(OUT, report) {
     for (const [name, url] of Object.entries(pagesFor(`moz-extension://${UUID}`)).filter(([n]) => ONLY.test(n))) {
       await driver.get(`${ORIGIN}/p/blank`);
       await driver.executeScript('location.href = arguments[0]', url);
-      await sleep(name.startsWith('popup') ? 1500 : 7000);
+      await sleep(name.startsWith('popup') ? 1500 : name.startsWith('audio') ? 11000 : 7000);
       const title = await chrome(() => driver.executeScript('return gBrowser.selectedBrowser.contentTitle'));
       report[`firefox ${name}`] = title.startsWith('AUDIT ') ? JSON.parse(title.slice(6)) : { title };
       await shot(name);
@@ -123,7 +129,7 @@ async function chromiumRun(OUT, report) {
     for (const [name, url] of Object.entries(pagesFor(`chrome-extension://${id}`)).filter(([n]) => ONLY.test(n))) {
       const page = await ctx.newPage();
       await page.goto(url);
-      await page.waitForTimeout(name.startsWith('popup') ? 1500 : 7000);
+      await page.waitForTimeout(name.startsWith('popup') ? 1500 : name.startsWith('audio') ? 11000 : 7000);
       const title = await page.title();
       report[`chromium ${name}`] = title.startsWith('AUDIT ') ? JSON.parse(title.slice(6)) : { title };
       await page.screenshot({ path: path.join(OUT, `chromium-${name}.png`) });

@@ -1370,3 +1370,115 @@ test('Shaka loads VTT and SRT subtitles passed by the extension', { skip: !NETWO
   assert.equal(await page.evaluate(() => window._shakaPlayer.getTextTracks().find(t => t.active).label), 'French');
   await page.close();
 });
+
+// ── Audio effects (src/audio-fx.mjs, src/audio-dsp.mjs, src/audio-ui.mjs) ──────────────────
+// levels.wav: 3 s loud (−6 dBFS) then 12 s quiet (−36 dBFS) voice-like sound, from another
+// host and without CORS headers
+const LEVELS = `http://127.0.0.1:8099/media/levels.wav`;
+const setAudio = v => sw.evaluate(async (a) => { if (a) await chrome.storage.local.set({ audioFx: a }); else await chrome.storage.local.remove('audioFx'); }, v);
+const fxStatus = page => page.evaluate(() => {
+  const s = window._audioFx.status();
+  return { mode: s.mode, preset: s.settings.preset, boost: s.settings.boost, ctx: s.contextState, latency: s.latency };
+});
+const dB = x => 20 * Math.log10(x + 1e-9);
+async function openAudio(file, url = LEVELS) {
+  const page = await ctx.newPage();
+  await page.goto(`chrome-extension://${extId}/${file}?url=${encodeURIComponent(url)}&title=Levels`);
+  await until(() => page.evaluate(() => !!window._audioFx && !!document.querySelector('.sap-audio-btn')), { timeout: 20000 });
+  return page;
+}
+// gain through the effects (output vs input level, dB) over `ms`, starting at time `at`
+// (`volume` < 1 makes a constant-level source "quiet": the element volume applies before Web Audio)
+async function gainAt(page, at, settle, ms = 1500, volume = 1) {
+  await page.evaluate(([t, v]) => { const m = document.querySelector('video, audio'); m.volume = v; m.currentTime = t; return m.play(); }, [at, volume]);
+  await sleep(settle);
+  const r = await page.evaluate(ms => window._audioFx.measure(ms), ms);
+  return { gain: dB(r.out.rms) - dB(r.in.rms), out: r.out, in: r.in };
+}
+
+// Vidstack lays out audio-only files with its audio skin (controls off-screen on this page), so it
+// gets the HLS fixture (video + a full-scale 440 Hz audio rendition) made quiet by the volume.
+const QUIET = 0.0316; // −30 dB
+for (const [name, file, url, loudAt, quietAt] of [
+  ['Vidstack', 'player.html', `${ORIGIN}/hls-real/master.m3u8`, [1, 1], [4, QUIET]],
+  ['Shaka', 'player-shaka.html', LEVELS, [0.2, 1], [5, 1]],
+  ['ArtPlayer', 'player-art.html', LEVELS, [0.2, 1], [5, 1]]
+]) {
+  test(`audio effects (${name}): nothing runs while Off; Dialogue lifts quiet speech after a loud part; boost; Off routes around`, async (t) => {
+    await setAudio(null);
+    const page = await openAudio(file, url);
+    assert.deepEqual(await fxStatus(page).then(s => [s.mode, s.ctx]), ['off', 'none'], 'no AudioContext while Off');
+    // the button sits in the player's control bar
+    assert.equal(await page.evaluate(() => !!document.querySelector('.sap-audio').closest('media-community-skin, .shaka-controls-button-panel, .art-controls')), true);
+    // real clicks: open the panel, choose Dialogue
+    await page.evaluate(() => { const c = document.querySelector('.art-video-player, .shaka-controls-container, media-community-skin'); if (c) c.classList.add('art-control-show', 'art-hover'); });
+    await page.click('.sap-audio-btn', { force: true });
+    assert.equal(await page.isVisible('.sap-audio-menu'), true);
+    await page.click('.sap-audio-menu [data-preset="dialogue"]');
+    assert.equal(await page.getAttribute('.sap-audio-menu [data-preset="dialogue"]', 'aria-checked'), 'true');
+    await page.evaluate(() => document.querySelector('video, audio').play());
+    const active = await until(() => fxStatus(page).then(s => s.mode === 'active' && s.ctx === 'running'), { timeout: 10000 });
+    assert.ok(active, JSON.stringify(await fxStatus(page)));
+    assert.equal(await until(() => sw.evaluate(async () => ((await chrome.storage.local.get('audioFx')).audioFx || {}).preset)), 'dialogue', 'choice remembered');
+
+    const loud = await gainAt(page, loudAt[0], 800, 1500, loudAt[1]);
+    const quiet = await gainAt(page, quietAt[0], 4000, 1500, quietAt[1]);
+    const status = await page.textContent('.sap-audio-status');
+    t.diagnostic(JSON.stringify({ loud: loud.gain.toFixed(1), quiet: quiet.gain.toFixed(1), outLoudPeak: loud.out.peak.toFixed(3), status, latencyMs: Math.round((await fxStatus(page)).latency * 1000) }));
+    assert.ok(loud.gain < 0, `loud part turned down (${loud.gain.toFixed(1)} dB)`);
+    assert.ok(quiet.gain > 8, `quiet part lifted (${quiet.gain.toFixed(1)} dB)`);
+    assert.ok(loud.out.peak <= 0.9, `no clipping (${loud.out.peak})`);
+    assert.match(status, /Leveler [+−]/);
+
+    // Music (no leveling) at 200 %: the quiet part comes out 6 dB louder
+    await page.evaluate(() => window._audioFx.set({ preset: 'music', boost: 2 }));
+    const boosted = await gainAt(page, 6, 700, 1500, quietAt[1]);
+    assert.ok(Math.abs(boosted.gain - 6) < 1, `boost 200 % = ${boosted.gain.toFixed(1)} dB`);
+
+    // Off: the worklet is dropped and the audio goes straight out
+    await page.evaluate(() => window._audioFx.set({ preset: 'off', boost: 1 }));
+    assert.equal((await fxStatus(page)).mode, 'bypass');
+    const plain = await gainAt(page, 6, 500, 1500, quietAt[1]);
+    assert.ok(Math.abs(plain.gain) < 0.5, `bypass changes nothing (${plain.gain.toFixed(2)} dB)`);
+    assert.ok(plain.in.rms > 0.002, 'audio is not silent (cross-origin file without CORS headers)');
+
+    // paused → the AudioContext is suspended (no audio work)
+    await page.evaluate(() => document.querySelector('video, audio').pause());
+    assert.ok(await until(() => fxStatus(page).then(s => s.ctx === 'suspended'), { timeout: 5000 }), 'context suspended while paused');
+    await page.close();
+  });
+}
+
+test('audio effects: the popup default reaches an open player; Shift+↑ boosts, "a" cycles presets; HLS (MSE) audio is processed', async (t) => {
+  await setAudio(null);
+  const page = await openAudio('player-art.html', `${ORIGIN}/hls-real/master.m3u8`);
+  await page.click('.sap-audio-btn', { force: true }); // a user gesture (autoplay policy)
+  await page.evaluate(() => document.querySelector('video').play());
+  const popup = await ctx.newPage();
+  await popup.goto(`chrome-extension://${extId}/popup.html`);
+  await popup.click('#tab-player');
+  await popup.selectOption('#audio-preset', 'night');
+  await popup.selectOption('#audio-boost', '1.5');
+  const got = await until(() => fxStatus(page).then(s => (s.preset === 'night' && s.boost === 1.5 && s.mode === 'active' ? s : null)), { timeout: 10000 });
+  assert.ok(got, JSON.stringify(await fxStatus(page)));
+  await popup.close();
+  const r = await page.evaluate(() => window._audioFx.measure(1000));
+  t.diagnostic(JSON.stringify(r));
+  assert.ok(r.out.rms > 0.002, 'HLS audio comes through the effects');
+  // keys (the panel is closed so they reach the page)
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Shift+ArrowUp');
+  assert.equal((await fxStatus(page)).boost, 1.6);
+  await page.keyboard.press('a');
+  assert.equal((await fxStatus(page)).preset, 'music');
+  // the popup shows the player's choice next time
+  const popup2 = await ctx.newPage();
+  await popup2.goto(`chrome-extension://${extId}/popup.html`);
+  await popup2.click('#tab-player');
+  await until(() => popup2.inputValue('#audio-preset').then(v => v === 'music'));
+  assert.equal(await popup2.inputValue('#audio-preset'), 'music');
+  assert.equal(await popup2.inputValue('#audio-boost'), '1.5'); // nearest of the popup's steps
+  await popup2.close();
+  await page.close();
+  await setAudio(null);
+});

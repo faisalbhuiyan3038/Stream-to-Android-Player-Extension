@@ -90,6 +90,35 @@
         </select>
       </div>
 
+      <!-- Audio effects of the built-in players (src/audio-fx.mjs; storage.local "audioFx", shared
+           with the players' Audio button, so a change here reaches open players at once) -->
+      <div class="setting-row column">
+        <div class="setting-label">
+          <span class="setting-title">Audio effects</span>
+          <span class="setting-desc">Normalizer, dialogue boost and volume boost in the browser player (its 🔊 button has all settings). The last choice is used for the next video</span>
+        </div>
+        <select id="audio-preset" class="select-dropdown" aria-label="Audio preset">
+          <option value="off">Off</option>
+          <option value="standard">Standard — evens out loud and quiet parts</option>
+          <option value="cinema">Cinema — keeps the impact, clearer voices</option>
+          <option value="dialogue">Dialogue — quiet voices lifted, loud scenes tamed</option>
+          <option value="night">Night — strongest leveling, low-volume listening</option>
+          <option value="music">Music — volume boost only</option>
+          <option value="custom" hidden>Custom (set in the player)</option>
+        </select>
+        <div class="setting-label" style="margin-top: 8px;">
+          <span class="setting-title">Volume boost</span>
+          <span class="setting-desc">Louder than the player's 100 %; a limiter keeps it from distorting</span>
+        </div>
+        <select id="audio-boost" class="select-dropdown" aria-label="Volume boost">
+          <option value="1">100 % (off)</option>
+          <option value="1.25">125 %</option>
+          <option value="1.5">150 %</option>
+          <option value="1.75">175 %</option>
+          <option value="2">200 %</option>
+        </select>
+      </div>
+
       <!-- Whole-video download while watching (built-in players, src/stream-cache.mjs) -->
       <div class="setting-row">
         <div class="setting-label">

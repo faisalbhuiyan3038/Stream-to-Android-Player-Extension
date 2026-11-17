@@ -3,6 +3,8 @@ Firefox addon store supports some markdown, so only those are used below. Chrome
 A browser extension to detect streaming videos (M3U8, MPD, MP4) and send them to your preferred media player on Android and Windows, play them in the browser, or save them as MP4. Supports VLC, MPV, MX Player, and other players with command-line arguments.
 
 **Changelog**
+1.8
+- New: audio effects in the built-in players. A smart volume normalizer makes quiet dialogue easy to hear in films with loud action, a volume boost goes up to 200 % without distortion, and a dialogue boost brings voices forward (with 5.1 surround it raises the voice channel). Presets: Standard, Cinema, Dialogue, Night, Music, or your own settings, plus bass, treble and mono. Light on the computer: nothing runs while it is off.
 1.7
 - New: ArtPlayer, a third built-in player. It has subtitle size and timing (offset) settings, screenshots, picture-in-picture, and phone gestures (double-tap to skip, swipe to seek, long-press to fast forward, screen lock).
 - The built-in players now load the whole video while you watch, so playback no longer stops to wait for the network. It keeps going while paused or in a background tab and keeps retrying when the site is slow.
@@ -72,7 +74,7 @@ A browser extension to detect streaming videos (M3U8, MPD, MP4) and send them to
   - **Native Messaging** (browser-to-app communication).
   - **Protocol Handlers** (e.g., vlc://, mpv://).
   - **VLC HTTP Interface** (remote control).
-- **In-Browser Playback**: Shaka Player (HLS/DASH/MP4), ArtPlayer (HLS/DASH/MP4) and Vidstack, made for both desktop and phones. They load the whole video while you watch, so playback does not stop to wait for the network.
+- **In-Browser Playback**: Shaka Player (HLS/DASH/MP4), ArtPlayer (HLS/DASH/MP4) and Vidstack, made for both desktop and phones. They load the whole video while you watch, so playback does not stop to wait for the network, and have audio effects: a volume normalizer for quiet dialogue, volume boost up to 200 %, dialogue boost and presets (Cinema, Dialogue, Night…).
 
 **Download**
 - Save videos as **MP4** right in the browser, on desktop and Android. No extra setup needed.
