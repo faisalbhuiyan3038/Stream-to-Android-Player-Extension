@@ -1449,6 +1449,91 @@ for (const [name, file, url, loudAt, quietAt] of [
   });
 }
 
+// Website audio effects run in the content script's isolated world: read through the extension
+const tabOf = (page) => sw.evaluate(async (u) => (await chrome.tabs.query({})).find(t => t.url === u).id, page.url());
+const siteElements = (tabId) => sw.evaluate(async (id) => {
+  const [r] = await chrome.scripting.executeScript({ target: { tabId: id }, func: () => globalThis.__sapAudio && globalThis.__sapAudio.elements() });
+  return r.result;
+}, tabId);
+const siteMeasure = (tabId, el) => sw.evaluate(async ([id, e]) => {
+  const [r] = await chrome.scripting.executeScript({ target: { tabId: id }, func: (x) => globalThis.__sapAudio.measure(1000, x), args: [e] });
+  return r.result;
+}, [tabId, el]);
+const corsRules = () => sw.evaluate(async () => (await chrome.declarativeNetRequest.getSessionRules()).map(r => r.id).filter(id => id >= 1e9 && id < 1.9e9));
+const storedPreset = () => sw.evaluate(async () => ((await chrome.storage.local.get('audioFx')).audioFx || {}).preset);
+
+test('audio effects on websites: media from another server without CORS headers, in a closed shadow root and in <audio> is processed; a server refusing CORS keeps its sound; nothing is added to the page', async (t) => {
+  await setAudio({ preset: 'night' });
+  const page = await openSite('/p/fx-everywhere');
+  try {
+    await page.evaluate(() => window._playAll());
+    const tabId = await tabOf(page);
+    await sleep(800);
+    assert.deepEqual(await siteElements(tabId), [], 'nothing while the setting is off');
+    assert.deepEqual(await corsRules(), []);
+
+    await setSettings({ webAudioFx: true });
+    const by = await until(async () => {
+      const m = Object.fromEntries((await siteElements(tabId)).map(e => [e.id, e]));
+      return m.other && m.other.mode === 'active' && m.shadow && m.shadow.mode === 'active' && m.refuse && m.refuse.noCors ? m : null;
+    }, { timeout: 20000 });
+    assert.ok(by, JSON.stringify(await siteElements(tabId)));
+    assert.deepEqual(await corsRules(), [1e9 + tabId], 'CORS rule for this tab');
+    for (const id of ['other', 'shadow']) {
+      const r = await siteMeasure(tabId, id);
+      t.diagnostic(`${id}: ${JSON.stringify(r)}`);
+      assert.ok(r.in.rms > 0.001, `${id}: Web Audio hears the file (not silenced by CORS)`);
+      assert.ok(r.out.rms > 0.001, `${id}: and plays it through the effects`);
+    }
+    const media = await page.evaluate(() => [document.getElementById('other'), window._shadowAudio, document.getElementById('refuse')]
+      .map(m => ({ paused: m.paused, time: m.currentTime, cors: m.getAttribute('crossorigin') })));
+    t.diagnostic(JSON.stringify(media));
+    assert.ok(media.every(m => !m.paused && m.time > 0), 'all three keep playing');
+    assert.deepEqual(media.map(m => m.cors), ['anonymous', 'anonymous', null], 'the refusing server got its element back as it was');
+    assert.equal(await page.evaluate(() => [...document.querySelectorAll('*')].some(e => e.shadowRoot && e.shadowRoot.querySelector('.sap-audio, .t'))), false, 'no audio control added to the page');
+    assert.deepEqual(await sw.evaluate(id => chrome.action.getBadgeBackgroundColor({ tabId: id }), tabId), [126, 87, 194, 255], 'badge shows effects running');
+
+    // the Alt+Shift+A handler: next preset (Night → Music) and a toast
+    await sw.evaluate(id => cycleAudioPreset({ id }), tabId);
+    assert.equal(await storedPreset(), 'music');
+    assert.ok(await until(() => page.evaluate(() => [...document.documentElement.children]
+      .some(e => e.shadowRoot && (e.shadowRoot.querySelector('.t.show') || {}).textContent === 'Audio: Music'))), 'toast shown');
+
+    await setSettings({ webAudioFx: false });
+    assert.ok(await until(async () => (await corsRules()).length === 0), 'CORS rule removed when switched off');
+    assert.ok(await until(async () => (await siteElements(tabId)).every(e => e.mode !== 'active')), 'effects off');
+  } finally {
+    await page.close();
+    await setSettings({ webAudioFx: false });
+    await setAudio(null);
+  }
+});
+
+test('popup Audio tab: live status of the page, a preset chosen there reaches it', async () => {
+  await setAudio({ preset: 'night' });
+  await setSettings({ webAudioFx: true });
+  const page = await openSite('/p/fx-everywhere');
+  try {
+    await page.evaluate(() => window._playAll());
+    const tabId = await tabOf(page);
+    const popup = await ctx.newPage();
+    await popup.goto(`chrome-extension://${extId}/popup.html?tabId=${tabId}`);
+    await popup.click('#tab-audio');
+    assert.equal(await popup.isChecked('#toggle-web-audio'), true);
+    const status = await until(() => popup.textContent('#audio-panel .sap-audio-status').then(s => (/Leveler|On/.test(s) ? s : null)), { timeout: 20000 });
+    assert.ok(status, `status: ${await popup.textContent('#audio-panel .sap-audio-status')}`);
+    assert.equal(await popup.isHidden('#audio-capture'), true, 'no tab capture offered while the page works');
+    await popup.click('#audio-panel [data-preset="dialogue"]');
+    assert.equal(await until(() => storedPreset().then(p => p === 'dialogue' && p)), 'dialogue');
+    assert.equal(await popup.getAttribute('#audio-panel [data-preset="dialogue"]', 'aria-checked'), 'true');
+    await popup.close();
+  } finally {
+    await page.close();
+    await setSettings({ webAudioFx: false });
+    await setAudio(null);
+  }
+});
+
 test('audio effects: the popup default reaches an open player; Shift+↑ boosts, "a" cycles presets; HLS (MSE) audio is processed', async (t) => {
   await setAudio(null);
   const page = await openAudio('player-art.html', `${ORIGIN}/hls-real/master.m3u8`);
@@ -1456,9 +1541,9 @@ test('audio effects: the popup default reaches an open player; Shift+↑ boosts,
   await page.evaluate(() => document.querySelector('video').play());
   const popup = await ctx.newPage();
   await popup.goto(`chrome-extension://${extId}/popup.html`);
-  await popup.click('#tab-player');
-  await popup.selectOption('#audio-preset', 'night');
-  await popup.selectOption('#audio-boost', '1.5');
+  await popup.click('#tab-audio');
+  await popup.click('#audio-panel [data-preset="night"]');
+  await popup.locator('#audio-panel input[data-key="boost"]').evaluate((el) => { el.value = '150'; el.dispatchEvent(new Event('input', { bubbles: true })); });
   const got = await until(() => fxStatus(page).then(s => (s.preset === 'night' && s.boost === 1.5 && s.mode === 'active' ? s : null)), { timeout: 10000 });
   assert.ok(got, JSON.stringify(await fxStatus(page)));
   await popup.close();
@@ -1474,11 +1559,136 @@ test('audio effects: the popup default reaches an open player; Shift+↑ boosts,
   // the popup shows the player's choice next time
   const popup2 = await ctx.newPage();
   await popup2.goto(`chrome-extension://${extId}/popup.html`);
-  await popup2.click('#tab-player');
-  await until(() => popup2.inputValue('#audio-preset').then(v => v === 'music'));
-  assert.equal(await popup2.inputValue('#audio-preset'), 'music');
-  assert.equal(await popup2.inputValue('#audio-boost'), '1.5'); // nearest of the popup's steps
+  await popup2.click('#tab-audio');
+  await until(() => popup2.getAttribute('#audio-panel [data-preset="music"]', 'aria-checked').then(v => v === 'true'));
+  assert.equal(await popup2.getAttribute('#audio-panel [data-preset="music"]', 'aria-checked'), 'true');
+  assert.equal(await popup2.inputValue('#audio-panel input[data-key="boost"]'), '160');
   await popup2.close();
   await page.close();
   await setAudio(null);
+});
+
+// Presets: a moved slider marks the preset "*"; save into it, save as new (typed name), rename,
+// delete, restore a built-in — in each player's own panel, with real clicks and keys
+const storedFx = () => sw.evaluate(async () => (await chrome.storage.local.get('audioFx')).audioFx || {});
+const slide = (page, sel, key, v) => page.locator(`${sel} input[data-key="${key}"]`).evaluate((el, x) => { el.value = String(x); el.dispatchEvent(new Event('input', { bubbles: true })); }, v);
+for (const [name, file, url] of [
+  ['Vidstack', 'player.html', `${ORIGIN}/hls-real/master.m3u8`],
+  ['Shaka', 'player-shaka.html', LEVELS],
+  ['ArtPlayer', 'player-art.html', LEVELS]
+]) {
+  test(`audio presets (${name}): "Cinema*" after a change; save as new, rename, delete, save to Cinema, restore`, async () => {
+    await setAudio({ preset: 'cinema' });
+    const page = await openAudio(file, url);
+    const M = '.sap-audio-menu';
+    const chipText = id => page.textContent(`${M} [data-preset="${id}"]`);
+    try {
+      await page.evaluate(() => { const c = document.querySelector('.art-video-player, .shaka-controls-container, media-community-skin'); if (c) c.classList.add('art-control-show', 'art-hover'); });
+      await page.click('.sap-audio-btn', { force: true });
+      // the player may still be loading its source (a play() then is interrupted): retry
+      assert.ok(await until(() => page.evaluate(() => document.querySelector('video, audio').play().then(() => true, () => false))), 'playing');
+      assert.equal(await chipText('cinema'), 'Cinema');
+
+      // a change: still Cinema, marked; nothing saved yet
+      await slide(page, M, 'bass', 6);
+      assert.equal(await chipText('cinema'), 'Cinema*');
+      assert.equal(await page.getAttribute(`${M} [data-preset="cinema"]`, 'aria-checked'), 'true');
+      assert.match(await page.textContent(`${M} .sap-audio-hint`), /Changed from Cinema/);
+      assert.deepEqual(await page.$$eval(`${M} .sap-audio-actions [data-act]`, bs => bs.map(b => b.dataset.act)), ['save', 'new', 'reset']);
+
+      // Save as new: the name is typed for real (a space must not pause the video)
+      await page.click(`${M} [data-act="new"]`);
+      assert.equal(await page.inputValue(`${M} .sap-audio-name-input`), 'Cinema 2');
+      assert.equal(await page.evaluate(() => document.activeElement.className), 'sap-audio-name-input');
+      await page.keyboard.press('Control+A');
+      await page.keyboard.type('Late night');
+      assert.equal(await page.evaluate(() => document.querySelector('video, audio').paused), false, 'typing reached the player');
+      await page.keyboard.press('Enter');
+      const fx = await until(() => storedFx().then(f => (f.preset && f.preset.startsWith('u') ? f : null)));
+      assert.ok(fx, JSON.stringify(await storedFx()));
+      assert.equal(fx.presets[fx.preset].name, 'Late night');
+      assert.equal(fx.presets[fx.preset].bass, 6);
+      assert.equal(fx.edits, null);
+      const id = fx.preset;
+      assert.equal(await chipText(id), 'Late night');
+      assert.equal(await page.getAttribute(`${M} [data-preset="${id}"]`, 'aria-checked'), 'true');
+      assert.equal(await page.evaluate(i => document.activeElement.dataset.preset, id), id, 'focus on the new preset');
+      assert.equal(await chipText('cinema'), 'Cinema', 'Cinema itself unchanged');
+      assert.equal(await page.evaluate(() => window._audioFx.status().params.bass), 6);
+
+      // Rename to a taken name: refused in place; Escape closes only the name field
+      await page.click(`${M} [data-act="rename"]`);
+      await page.keyboard.press('Control+A');
+      await page.keyboard.type('cinema');
+      await page.keyboard.press('Enter');
+      assert.equal(await page.textContent(`${M} .sap-audio-error`), 'That name is already used');
+      assert.equal(await page.getAttribute(`${M} .sap-audio-name-input`, 'aria-invalid'), 'true');
+      await page.keyboard.press('Escape');
+      assert.equal(await page.isVisible(`${M} .sap-audio-name`), false);
+      assert.equal(await page.isVisible(M), true, 'the panel stays open');
+      await page.click(`${M} [data-act="rename"]`);
+      await page.fill(`${M} .sap-audio-name-input`, 'Movies');
+      await page.click(`${M} [data-act="name-ok"]`);
+      assert.equal(await until(() => storedFx().then(f => f.presets && f.presets[id] && f.presets[id].name === 'Movies')), true);
+      assert.equal(await chipText(id), 'Movies');
+
+      // Delete needs a second tap; the sound keeps playing as an unsaved Custom
+      await page.click(`${M} [data-act="delete"]`);
+      assert.equal(await page.textContent(`${M} [data-act="delete"]`), 'Delete “Movies”?');
+      assert.equal(await page.$(`${M} [data-preset="${id}"]`) != null, true);
+      await page.click(`${M} [data-act="delete"]`);
+      assert.equal(await page.$(`${M} [data-preset="${id}"]`), null);
+      assert.equal(await chipText('custom'), 'Custom*');
+      assert.equal(await page.evaluate(() => window._audioFx.status().params.bass), 6);
+
+      // Save to Cinema, then Restore default
+      await page.click(`${M} [data-preset="cinema"]`);
+      await slide(page, M, 'treble', -3);
+      await page.click(`${M} [data-act="save"]`);
+      assert.equal(await chipText('cinema'), 'Cinema');
+      assert.match(await page.textContent(`${M} .sap-audio-hint`), /Your version of Cinema/);
+      assert.equal((await until(() => storedFx().then(f => f.presets && f.presets.cinema))).treble, -3);
+      await page.click(`${M} [data-act="restore"]`);
+      assert.equal(await until(() => storedFx().then(f => !(f.presets || {}).cinema)), true);
+      assert.equal(await page.evaluate(() => window._audioFx.status().params.treble), 1);
+      assert.equal(await page.isVisible(`${M} .sap-audio-actions`), false);
+    } finally {
+      await page.close();
+      await setAudio(null);
+    }
+  });
+}
+
+test('audio presets: a preset saved in the popup reaches an open player; Alt+Shift+A includes it', async () => {
+  await setAudio({ preset: 'night' });
+  const page = await openAudio('player-art.html');
+  const popup = await ctx.newPage();
+  try {
+    await popup.goto(`chrome-extension://${extId}/popup.html`);
+    await popup.click('#tab-audio');
+    await until(() => popup.getAttribute('#audio-panel [data-preset="night"]', 'aria-checked').then(v => v === 'true'));
+    await slide(popup, '#audio-panel', 'dialogue', 10);
+    assert.equal(await popup.textContent('#audio-panel [data-preset="night"]'), 'Night*');
+    await until(() => page.evaluate(() => window._audioFx.status().params.dialogue === 10));
+    await popup.click('#audio-panel [data-act="new"]');
+    await popup.fill('#audio-panel .sap-audio-name-input', 'Quiet talk');
+    await popup.press('#audio-panel .sap-audio-name-input', 'Enter');
+    const id = await until(() => page.evaluate(() => { const s = window._audioFx.settings; return s.preset.startsWith('u') && s.presets[s.preset].name === 'Quiet talk' ? s.preset : null; }));
+    assert.ok(id, 'the player follows the popup');
+    // the player's own panel lists it, selected
+    await page.click('.sap-audio-btn', { force: true });
+    assert.equal(await page.textContent(`.sap-audio-menu [data-preset="${id}"]`), 'Quiet talk');
+    assert.equal(await page.getAttribute(`.sap-audio-menu [data-preset="${id}"]`, 'aria-checked'), 'true');
+    // the shortcut cycles Music → the user's preset → Off
+    await sw.evaluate(() => setAudioPreset('music'));
+    await sw.evaluate(() => cycleAudioPreset(null));
+    assert.equal((await storedFx()).preset, id);
+    await sw.evaluate(() => cycleAudioPreset(null));
+    assert.equal((await storedFx()).preset, 'off');
+  } finally {
+    await popup.close();
+    await page.close();
+    await setAudio(null);
+    await setSettings({ webAudioFx: false }); // setAudioPreset switched it on
+  }
 });

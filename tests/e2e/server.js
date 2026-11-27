@@ -52,6 +52,33 @@ function startServer() {
     if (url === '/p/blank') return html('Blank', 'blank');
     if (url === '/p/early') return html('Early', `<script>fetch('/hls/early.m3u8')</script>`);
     if (url === '/p/video') return html('Video', `<video src="${ORIGIN}/media/clip_1080p.mp4" controls></video>`);
+    // Audio effects on websites: an own-origin and an other-origin video under a strict CSP
+    if (url === '/p/fx-video') {
+      return send(200, 'text/html', page('FX', `<style>video{display:block;width:480px;height:270px;margin:0 0 40px}</style>
+        <video id="own" src="${ORIGIN}/media/real.webm" loop></video><video id="other" src="${ALT_ORIGIN}/media/real.webm" loop></video>`),
+      { 'content-security-policy': "default-src 'self'; media-src *; style-src 'self' 'unsafe-inline'; script-src 'self'" });
+    }
+    // Audio effects on websites, the hard cases: another server without CORS headers, an <audio>
+    // inside a closed shadow root (page keeps a reference for the test), a server refusing CORS
+    if (url === '/p/fx-everywhere') {
+      return send(200, 'text/html', page('FX everywhere', `
+        <video id="other" src="${ALT_ORIGIN}/media/levels.wav" loop></video>
+        <div id="host"></div>
+        <video id="refuse" src="${ALT_ORIGIN}/media/levels-no-cors.wav" loop></video>
+        <script src="/fx-everywhere.js"></script>`),
+      { 'content-security-policy': "default-src 'self'; media-src *; style-src 'self' 'unsafe-inline'; script-src 'self'" });
+    }
+    if (url === '/fx-everywhere.js') {
+      return send(200, 'text/javascript', `
+        const root = document.getElementById('host').attachShadow({ mode: 'closed' });
+        const a = document.createElement('audio');
+        a.id = 'shadow';
+        a.loop = true;
+        a.src = '${ALT_ORIGIN}/media/levels.wav';
+        root.appendChild(a);
+        window._shadowAudio = a;
+        window._playAll = () => Promise.all([document.getElementById('other'), a, document.getElementById('refuse')].map(m => m.play()));`);
+    }
     if (url === '/p/ts-only') return html('TS only', `<script>fetch('/live/chunk0001.ts')</script>`);
     if (url === '/p/segments') {
       return html('Segments', `<script>
@@ -266,7 +293,10 @@ sub1.vtt
     }
     // Audio effects tests: 3 s loud (−6 dBFS) then 12 s quiet (−36 dBFS) voice-like sound, served
     // WITHOUT CORS headers (extension pages may read it anyway; Firefox needs crossorigin)
-    if (url === '/media/levels.wav') {
+    // ...and a copy whose server refuses CORS-mode requests (an Origin header), like a CDN with
+    // hotlink protection: the extension must leave it playing with its normal audio
+    if (url === '/media/levels-no-cors.wav' && req.headers.origin) return send(403, 'text/plain', 'no');
+    if (url === '/media/levels.wav' || url === '/media/levels-no-cors.wav') {
       const data = levelsWav();
       const type = 'audio/wav';
       const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');

@@ -31,7 +31,15 @@ function stageFirefox() {
     // Same for "open stream links": no other test navigates to a stream file directly.
     fs.writeFileSync(file, fs.readFileSync(file, 'utf8')
       .replace("customPatterns: ''", `customPatterns: ${JSON.stringify('m3u8 /\\/api\\/play\\/\\d+/')}`)
-      .replace('openStreamLinks: false', 'openStreamLinks: true'));
+      .replace('openStreamLinks: false', 'openStreamLinks: true')
+      // and "audio effects on websites" (read from storage by web-audio.bundle.js, so stored too)
+      .replace('webAudioFx: false', 'webAudioFx: true')
+      + "\nsettingsReady.then(() => browser.storage.local.set({ settings, audioFx: { preset: 'night' } }));\n");
+    // Test hook: the website effects live in the content script, out of WebDriver's reach; the
+    // staged copy mirrors their state into an attribute of the page
+    const wa = path.join(dir, 'web-audio.bundle.js');
+    fs.writeFileSync(wa, fs.readFileSync(wa, 'utf8')
+      + '\nsetInterval(() => { if (globalThis.__sapAudio) document.documentElement.dataset.sapAudio = JSON.stringify(globalThis.__sapAudio.elements()); }, 300);\n');
     if (!NATIVE) return;
     manifest.permissions.push('nativeMessaging');
     markerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sap-ff-marker-'));
@@ -249,6 +257,30 @@ test('button: drag moves it to the left edge and the spot is remembered after a 
   const restored = await rect();
   assert.ok(restored.x < restored.vw / 4, `restored: ${JSON.stringify(restored)}`);
 });
+test('audio effects on websites (setting and Night preset on): other-server media without CORS headers and <audio> in a closed shadow root are processed under a strict CSP; a server refusing CORS keeps playing', async () => {
+  await open('/p/fx-everywhere');
+  // a real tap first: Firefox allows audible playback and starts AudioContexts after one
+  await driver.actions().move({ x: 100, y: 60, origin: 'viewport' }).click().perform();
+  const played = await driver.executeScript("return window._playAll().then(() => true, e => String(e))");
+  assert.equal(played, true, `play() failed: ${played}`);
+  const state = () => driver.executeScript("return JSON.parse(document.documentElement.dataset.sapAudio || '[]')");
+  // the effects start their AudioContext on the next tap (as before: "Starts when you tap the video")
+  const ready = await until(async () => {
+    const list = await state();
+    return list.length === 3 && list.every(e => e.mode === 'waiting' || e.mode === 'active' || e.noCors) ? list : null;
+  }, { timeout: 20000 });
+  assert.ok(ready, `not ready: ${JSON.stringify(await state())}`);
+  await driver.actions().move({ x: 100, y: 60, origin: 'viewport' }).click().perform();
+  const by = await until(async () => {
+    const m = Object.fromEntries((await state()).map(e => [e.id, e]));
+    return m.other && m.other.mode === 'active' && m.shadow && m.shadow.mode === 'active' && m.refuse && m.refuse.noCors ? m : null;
+  }, { timeout: 20000 });
+  assert.ok(by, `effects not running everywhere: ${JSON.stringify(await state())}`);
+  const media = await driver.executeScript("return [document.getElementById('other'), window._shadowAudio, document.getElementById('refuse')].map(m => ({ paused: m.paused, cors: m.getAttribute('crossorigin') }))");
+  assert.ok(media.every(m => !m.paused), JSON.stringify(media));
+  assert.deepEqual(media.map(m => m.cors), ['anonymous', 'anonymous', null]);
+});
+
 test('native host: launches a program with referrer, title and url', { skip: !NATIVE && 'set E2E_NATIVE=1' }, async () => {
   await open('/p/early');
   await until(async () => (await readItems()).length === 1);

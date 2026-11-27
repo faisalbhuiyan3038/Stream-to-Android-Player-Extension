@@ -4,7 +4,8 @@ A browser extension to detect streaming videos (M3U8, MPD, MP4) and send them to
 
 **Changelog**
 1.8
-- New: audio effects in the built-in players. A smart volume normalizer makes quiet dialogue easy to hear in films with loud action, a volume boost goes up to 200 % without distortion, and a dialogue boost brings voices forward (with 5.1 surround it raises the voice channel). Presets: Standard, Cinema, Dialogue, Night, Music, or your own settings, plus bass, treble and mono. Light on the computer: nothing runs while it is off.
+- New: audio effects in the built-in players. A smart volume normalizer makes quiet dialogue easy to hear in films with loud action, a volume boost goes up to 200 % without distortion, and a dialogue boost brings voices forward (with 5.1 surround it raises the voice channel). Presets: Standard, Cinema, Dialogue, Night, Music, or your own: change a preset and save it, or save it as a new named preset. Plus bass, treble and mono. Light on the computer: nothing runs while it is off.
+- New (optional, off by default): the same audio effects on videos and audio on any website, including videos served from other servers and players hidden in shadow DOM. Nothing covers the video: use the popup's new Audio tab, the Alt+Shift+A shortcut or the right-click menu. Chrome/Edge can also process a whole tab for DRM-protected sites.
 1.7
 - New: ArtPlayer, a third built-in player. It has subtitle size and timing (offset) settings, screenshots, picture-in-picture, and phone gestures (double-tap to skip, swipe to seek, long-press to fast forward, screen lock).
 - The built-in players now load the whole video while you watch, so playback no longer stops to wait for the network. It keeps going while paused or in a background tab and keeps retrying when the site is slow.

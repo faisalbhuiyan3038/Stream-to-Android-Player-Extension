@@ -1,5 +1,5 @@
 Permission justifications for store review (Chrome Web Store "Privacy practices" tab, addons.mozilla.org review notes).
-Plain text on purpose: paste each block into the matching field. Applies to version 1.7.
+Plain text on purpose: paste each block into the matching field. Applies to version 1.8.
 
 ==================================================
 SINGLE PURPOSE
@@ -14,7 +14,7 @@ webRequest
 Used to detect video streams and subtitle files. The extension watches the network requests a page makes (request URL, response content type and status) to recognise stream playlists (.m3u8, .mpd) and video files, and reads the page's Referer, Origin and User-Agent request headers so the same values can be passed to the player (many video servers refuse requests without them). Requests are only observed; nothing is blocked or changed through webRequest.
 
 declarativeNetRequest
-Used to make the extension's own requests look like the page's. When the user opens a stream in the built-in player or downloader, a session rule limited to that player tab sets the page's Referer/Origin (and Cookie only if the user turned on "Forward cookies"). When the extension reads a stream's playlist to show its duration and qualities, a temporary rule limited to that single URL does the same and is removed right after. If the user turns on "Open stream links in the built-in player" (off by default), a redirect rule sends top-level navigations to .m3u8/.mpd (optionally .mp4) files to the built-in player page.
+Used to make the extension's own requests look like the page's. When the user opens a stream in the built-in player or downloader, a session rule limited to that player tab sets the page's Referer/Origin (and Cookie only if the user turned on "Forward cookies"). When the extension reads a stream's playlist to show its duration and qualities, a temporary rule limited to that single URL does the same and is removed right after. If the user turns on "Open stream links in the built-in player" (off by default), a redirect rule sends top-level navigations to .m3u8/.mpd (optionally .mp4) files to the built-in player page. If the user turns on "Effects on websites" for audio effects (off by default), a session rule limited to the tab where a page wants them adds "Access-Control-Allow-Origin: *" to that tab's media responses, so the page's own video can be processed by the browser's Web Audio (the extension loads that video without cookies, so only media anyone could fetch becomes readable, and only in that tab). The rule is removed when the tab closes or the user turns the effects off.
 
 scripting
 Used to find video sources in the page's DOM (<video>, <source>, <track> elements, including inside embedded player iframes) when the network requests alone are not enough, and to copy a stream URL to the clipboard when the user chooses "Copy" from the right-click menu or the keyboard shortcut.
@@ -32,7 +32,13 @@ clipboardWrite
 Copies a stream URL to the clipboard when the user clicks the copy button, or chooses "Copy" from the right-click menu or keyboard shortcut (in that case the copy runs in the page, without a click inside it, which needs this permission).
 
 contextMenus
-Adds four right-click menu entries on links, videos and audio elements: "Open in external player", "Play in browser player", "Copy stream URL" and "Download video". (Not available on Firefox for Android, where the menu API does not exist; the extension checks for it.)
+Adds four right-click menu entries on links, videos and audio elements: "Open in external player", "Play in browser player", "Copy stream URL" and "Download video", plus "Audio effects" with the audio presets on videos and audio elements. (Not available on Firefox for Android, where the menu API does not exist; the extension checks for it.)
+
+tabCapture (Chrome/Edge only)
+Used only when the user clicks "Process whole tab" in the popup's Audio tab, which is offered when a video's audio cannot be processed on the page (DRM-protected, or the site runs its own audio processing). The tab's sound is then run through the extension's audio effects and played back; nothing is recorded, stored or sent anywhere. Chrome shows its "sharing this tab" indicator while it is on, and it stops when the user clicks "Stop", turns the effects off, or closes the tab.
+
+offscreen (Chrome/Edge only)
+The audio of "Process whole tab" (see tabCapture) is played through the extension's audio effects in an offscreen document, because the extension's service worker cannot play audio. The document is created when the user starts it and closed when no tab is processed.
 
 nativeMessaging (optional permission, requested only when the user selects "Native Messaging" in the popup on desktop)
 Talks to the optional native helper program the user installs themselves, which launches the user's desktop player (VLC, mpv) with the stream URL, or downloads the stream with yt-dlp/ffmpeg.

@@ -28,7 +28,7 @@ jobs:
         shell: bash
         run: |
           # esbuild output can differ slightly between versions; only fail on missing files
-          for f in player.bundle.js player.bundle.css player-shaka.bundle.js player-shaka.bundle.css download.bundle.js player-art.bundle.js audio-worklet.bundle.js; do test -s "$f" || { echo "missing $f"; exit 1; }; done
+          for f in player.bundle.js player.bundle.css player-shaka.bundle.js player-shaka.bundle.css download.bundle.js player-art.bundle.js audio-worklet.bundle.js web-audio.bundle.js popup-audio.bundle.js offscreen-audio.bundle.js; do test -s "$f" || { echo "missing $f"; exit 1; }; done
       - run: npm test
       - name: Package both browsers
         run: npm run package

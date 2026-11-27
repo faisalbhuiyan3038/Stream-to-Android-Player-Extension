@@ -9,13 +9,12 @@
 // and when its audio is readable (Firefox gives silence for a cross-origin file without the
 // crossorigin attribute — the pages set it; blob:/MSE sources are always fine).
 //
-// Settings live in storage.local `audioFx` ({ preset, boost, mono, custom }); the last choice is
-// used by the next video, and changes from the popup reach open players at once.
-import { resolveParams, isNeutral, PRESETS, PRESET_NAMES } from './audio-dsp.mjs';
+// Settings live in storage.local `audioFx` (shape and presets: src/audio-presets.mjs); the last
+// choice is used by the next video, and changes from the popup reach open players at once.
+import { resolveParams, isNeutral } from './audio-dsp.mjs';
+import { normalizeSettings, presetLabel, presetName, selectPreset, nextPreset } from './audio-presets.mjs';
 
 export const AUDIO_KEY = 'audioFx';
-export const AUDIO_DEFAULTS = { preset: 'off', boost: 1, mono: false, custom: { normalizer: 2, dialogue: 3, bass: 0, treble: 0 } };
-export const PRESET_ORDER = ['off', 'standard', 'cinema', 'dialogue', 'night', 'music'];
 
 const storageApi = () => {
   const api = globalThis.browser || globalThis.chrome;
@@ -25,15 +24,6 @@ const isFirefox = () => {
   const api = globalThis.browser;
   return !!(api && api.runtime && typeof api.runtime.getBrowserInfo === 'function');
 };
-
-export function normalizeSettings(s) {
-  const v = { ...AUDIO_DEFAULTS, ...(s || {}) };
-  v.custom = { ...AUDIO_DEFAULTS.custom, ...((s && s.custom) || {}) };
-  if (!PRESETS[v.preset] && v.preset !== 'custom') v.preset = 'off';
-  v.boost = Math.min(2, Math.max(1, Math.round((+v.boost || 1) * 100) / 100));
-  v.mono = !!v.mono;
-  return v;
-}
 
 export async function loadAudioSettings() {
   const api = storageApi();
@@ -47,13 +37,28 @@ export async function loadAudioSettings() {
 }
 
 // Whether Web Audio may read this element's audio (see the header)
-export function audioReadable(video) {
+export function audioReadable(video, here = globalThis.location) {
+  if (video.mediaKeys) return false; // DRM (EME): Web Audio only gets silence
   if (video.srcObject) return true;
   const src = video.currentSrc || video.src || '';
   if (!src) return false;
   if (/^(blob|data|mediasource|chrome-extension|moz-extension|safari-web-extension):/i.test(src)) return true;
-  if (!isFirefox()) return true; // Chromium: extension pages with host permissions read cross-origin media
-  return video.crossOrigin === 'anonymous' || video.crossOrigin === 'use-credentials';
+  if (video.crossOrigin === 'anonymous' || video.crossOrigin === 'use-credentials') return true;
+  const extensionPage = !!here && /-extension:$/.test(here.protocol);
+  // Chromium: extension pages with host permissions read cross-origin media; a web page
+  // (web-audio.bundle.js) only reads its own origin's files, in every browser
+  if (extensionPage) return !isFirefox();
+  try { return !!here && new URL(src, here.href).origin === here.origin; } catch { return false; }
+}
+
+// Web pages: whether loading this element's media again in CORS mode would make it readable
+// (web-audio.js has the background add `Access-Control-Allow-Origin: *` to the tab's media
+// responses first). Never for DRM, live streams (srcObject), elements that already chose a CORS
+// mode, or sources that are readable anyway.
+export function needsCorsUpgrade(video, here = globalThis.location) {
+  if (video.mediaKeys || video.srcObject || video.hasAttribute('crossorigin')) return false;
+  const src = video.currentSrc || video.src || '';
+  return /^https?:/i.test(src) && !audioReadable(video, here);
 }
 
 // Firefox needs the attribute before the source is loaded (plain files only; MSE is a blob:)
@@ -62,7 +67,13 @@ export function prepareVideoForAudio(video) {
   if (isFirefox() && !video.hasAttribute('crossorigin')) video.crossOrigin = 'anonymous';
 }
 
-export function createAudioFx(video, { notify = () => {}, workletUrl = 'audio-worklet.bundle.js' } = {}) {
+// Firefox content script (web-audio.bundle.js): objects handed to the page's AudioWorklet must be
+// cloned into the page first, else "The object could not be cloned"; elsewhere a no-op
+const toPage = (o) => (typeof cloneInto === 'function' ? cloneInto(o, window) : o);
+
+// canRead: web-audio.js holds the source back while it reloads the element in CORS mode (a
+// source node made from the no-CORS copy would stay silent if that reload had to be undone)
+export function createAudioFx(video, { notify = () => {}, workletUrl = 'audio-worklet.bundle.js', canRead = audioReadable } = {}) {
   let settings = normalizeSettings();
   let ctx = null;
   let source = null;
@@ -82,7 +93,8 @@ export function createAudioFx(video, { notify = () => {}, workletUrl = 'audio-wo
   const listeners = new Set();
 
   const params = () => resolveParams(settings);
-  const wanted = () => !isNeutral(params());
+  let enabled = true; // false: web page whose "Audio effects on websites" was switched off
+  const wanted = () => enabled && !isNeutral(params());
   const emit = () => { for (const fn of listeners) { try { fn(api.status()); } catch (e) { console.warn(e); } } };
 
   function save() {
@@ -122,16 +134,16 @@ export function createAudioFx(video, { notify = () => {}, workletUrl = 'audio-wo
           await ctx.audioWorklet.addModule(new URL(workletUrl, location.href).href);
           moduleLoaded = true;
         }
-        const n = new AudioWorkletNode(ctx, 'sap-fx', {
+        const n = new AudioWorkletNode(ctx, 'sap-fx', toPage({
           numberOfInputs: 1,
           numberOfOutputs: 1,
           outputChannelCount: [2],
           channelCountMode: 'max',
           channelInterpretation: 'speakers',
           processorOptions: { params: params() }
-        });
+        }));
         n.port.onmessage = (e) => { lastState = e.data; emit(); };
-        if (reporting) n.port.postMessage({ report: true });
+        if (reporting) n.port.postMessage(toPage({ report: true }));
         node = n;
         return n;
       })().finally(() => { nodePromise = null; });
@@ -168,7 +180,7 @@ export function createAudioFx(video, { notify = () => {}, workletUrl = 'audio-wo
           if (node) {
             source.disconnect();
             node.disconnect();
-            node.port.postMessage({ end: true });
+            node.port.postMessage(toPage({ end: true }));
             node = null;
             source.connect(ctx.destination);
           }
@@ -180,7 +192,7 @@ export function createAudioFx(video, { notify = () => {}, workletUrl = 'audio-wo
         return;
       }
       if (!source) {
-        if (!audioReadable(video)) {
+        if (!canRead(video)) {
           mode = 'unreadable';
           return;
         }
@@ -196,7 +208,7 @@ export function createAudioFx(video, { notify = () => {}, workletUrl = 'audio-wo
         if (video.paused) onPause();
       }
       const n = await ensureNode();
-      n.port.postMessage({ params: params() });
+      n.port.postMessage(toPage({ params: params() }));
       if (mode !== 'active') {
         source.disconnect();
         source.connect(n);
@@ -262,31 +274,36 @@ export function createAudioFx(video, { notify = () => {}, workletUrl = 'audio-wo
         settings,
         params: p,
         active: mode === 'active',
-        wanted: !isNeutral(p),
-        presetName: PRESET_NAMES[settings.preset] || settings.preset,
+        wanted: enabled && !isNeutral(p),
+        presetName: presetLabel(settings),
         state: lastState,
         contextState: ctx ? ctx.state : 'none',
         latency: ctx ? (ctx.baseLatency || 0) + (ctx.outputLatency || 0) : 0,
         error: errorText
       };
     },
-    // partial: { preset?, boost?, mono?, custom? }
+    // partial: { preset?, boost?, mono?, edits?, presets? } (the operations in audio-presets.mjs)
     set(partial, { quiet = false } = {}) {
       touched = true;
-      settings = normalizeSettings({ ...settings, ...partial, custom: { ...settings.custom, ...((partial && partial.custom) || {}) } });
+      settings = normalizeSettings({ ...settings, ...partial });
       save();
       const done = apply();
       if (!quiet) emit();
       return done;
     },
+    setEnabled(on) {
+      enabled = !!on;
+      return apply();
+    },
+    // try again (the element's audio may have become readable)
+    refresh: () => apply(),
     setPreset(name) {
-      return api.set({ preset: name });
+      return api.set(selectPreset(name));
     },
     cyclePreset() {
-      const i = PRESET_ORDER.indexOf(settings.preset);
-      const next = PRESET_ORDER[(i + 1) % PRESET_ORDER.length];
+      const next = nextPreset(settings);
       api.setPreset(next);
-      notify(`Audio: ${PRESET_NAMES[next]}`);
+      notify(`Audio: ${presetName(settings, next)}`);
     },
     boostBy(delta) {
       const boost = Math.min(2, Math.max(1, Math.round((settings.boost + delta) * 20) / 20));
@@ -295,7 +312,7 @@ export function createAudioFx(video, { notify = () => {}, workletUrl = 'audio-wo
     },
     report(on) {
       reporting = !!on;
-      if (node) node.port.postMessage({ report: reporting });
+      if (node) node.port.postMessage(toPage({ report: reporting }));
     },
     subscribe(fn) {
       listeners.add(fn);

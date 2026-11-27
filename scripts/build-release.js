@@ -28,7 +28,7 @@ const targets = targetArg === 'all' ? ['chrome', 'firefox'] : [targetArg];
 // Already-minified esbuild bundles: copied as they are (minifying again gains nothing)
 const BANNER = '/*! Stream to Android Player | GPL-3.0-or-later | see LICENSE.md | source: https://github.com/faisalbhuiyan3038/Stream-to-Android-Player-Extension */';
 
-const PREBUILT = new Set(['player.bundle.js', 'player-shaka.bundle.js', 'download.bundle.js', 'player-art.bundle.js', 'audio-worklet.bundle.js', 'player.bundle.css', 'player-shaka.bundle.css']);
+const PREBUILT = new Set(['player.bundle.js', 'player-shaka.bundle.js', 'download.bundle.js', 'player-art.bundle.js', 'audio-worklet.bundle.js', 'web-audio.bundle.js', 'popup-audio.bundle.js', 'offscreen-audio.bundle.js', 'player.bundle.css', 'player-shaka.bundle.css']);
 
 function minifyHtml(html) {
   return html

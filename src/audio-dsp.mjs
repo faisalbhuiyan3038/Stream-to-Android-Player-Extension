@@ -39,9 +39,21 @@ const BLOCK = 128;
 const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x);
 const dbToGain = db => Math.pow(10, db / 20);
 
-// Settings as stored / sent by the page: { preset, boost, custom: {normalizer, dialogue, bass, treble}, mono }
+const own = (o, k) => !!o && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
+
+// The sound of a preset: the user's saved version (settings.presets: an edited built-in or a
+// preset of their own, src/audio-presets.mjs), else the built-in one
+export function presetSound(s, id) {
+  if (own(s && s.presets, id) && s.presets[id] && typeof s.presets[id] === 'object') return s.presets[id];
+  return own(PRESETS, id) ? PRESETS[id] : PRESETS.off;
+}
+
+// Settings as stored / sent by the page: { preset, boost, mono, edits, presets } (edits = unsaved
+// changes of the preset's sound). Before 1.8: { preset: 'custom', custom: {…} }, still read here
+// because the background passes stored settings on as they are.
 export function resolveParams(s = {}) {
-  const base = s.preset === 'custom' ? { ...PRESETS.off, ...(s.custom || {}) } : (PRESETS[s.preset] || PRESETS.off);
+  const edits = (s.edits && typeof s.edits === 'object') ? s.edits : (s.preset === 'custom' ? s.custom : null);
+  const base = edits ? { ...PRESETS.off, ...edits } : presetSound(s, s.preset);
   return {
     normalizer: clamp(Math.round(+base.normalizer || 0), 0, 4),
     dialogue: clamp(+base.dialogue || 0, 0, 12),

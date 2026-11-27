@@ -42,7 +42,8 @@ export function createPopover({ owner, anchor, menuHost = document.body, classNa
   for (const ev of ['click', 'pointerdown', 'pointerup', 'touchstart', 'touchend', 'dblclick', 'wheel']) menu.addEventListener(ev, e => e.stopPropagation());
   // keys typed in the menu (arrows on a slider) must not seek / change the volume
   menu.addEventListener('keydown', (e) => { if (e.key !== 'Escape') e.stopPropagation(); });
-  const outside = (e) => { if (!menu.hidden && !menu.contains(e.target) && !owner.contains(e.target)) pop.close(); };
+  // composedPath: inside a shadow root (web pages) e.target at document level is the shadow host
+  const outside = (e) => { const path = e.composedPath(); if (!menu.hidden && !path.includes(menu) && !path.includes(owner)) pop.close(); };
   document.addEventListener('pointerdown', outside, true);
   const esc = (e) => { if (e.key === 'Escape') pop.close(); };
   document.addEventListener('keydown', esc);

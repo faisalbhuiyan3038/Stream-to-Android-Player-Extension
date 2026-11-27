@@ -27,6 +27,11 @@ const EXTENSION_FILES = [
   'download.bundle.js',
   'timer-worker.js',
   'audio-worklet.bundle.js',
+  'web-audio.bundle.js',
+  'popup-audio.bundle.js',
+  'offscreen.html',
+  'offscreen-audio.bundle.js',
+  'audio-ui.css',
   'icons',
   'LICENSE.md'
 ];

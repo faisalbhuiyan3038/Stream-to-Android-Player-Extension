@@ -207,6 +207,25 @@ test('migration: users who had the ⬇️ (native yt-dlp) on keep the native dow
   assert.equal(await loadWith(undefined), 'browser');
 });
 
+test('audioCorsRule: CORS header on this tab\'s media responses only, outside the other rule ids', () => {
+  const rule = JSON.parse(JSON.stringify(run('audioCorsRule(7)')));
+  assert.deepEqual(rule.condition, { tabIds: [7], resourceTypes: ['media'] });
+  assert.deepEqual(rule.action, {
+    type: 'modifyHeaders',
+    responseHeaders: [{ header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' }]
+  });
+  // player rules are tabId + 1, link rules 1001–1003, playlist-analysis rules ≥ 1 900 000 000
+  assert.equal(rule.id, 1000000007);
+});
+
+test('audioPresetList: built-ins, then the user\'s named presets (shortcut and context menu); bad entries skipped', () => {
+  const list = JSON.parse(JSON.stringify(run(`audioPresetList({ preset: 'u1', presets: {
+    cinema: { bass: 4 }, u1: { name: '  Late   night ', bass: 2 }, u2: { name: '' }, 'u-x': { name: 'Bad' }, u3: null } })`)));
+  assert.deepEqual(list.map(([id]) => id), ['off', 'standard', 'cinema', 'dialogue', 'night', 'music', 'u1']);
+  assert.deepEqual(list[6], ['u1', 'Late night']);
+  assert.equal(run('audioPresetList(undefined)').length, 6);
+});
+
 // ── Phase 3: direct stream links → web player ───────────────────────────────
 
 test('buildLinkRedirectRules: rules per setting, DASH on Shaka (or ArtPlayer), engine respected', () => {

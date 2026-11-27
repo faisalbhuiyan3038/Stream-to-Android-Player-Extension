@@ -17,6 +17,7 @@
          platform class popup.js puts on <body>. -->
     <nav class="tabs" role="tablist" aria-label="Popup sections">
       <button class="tab" role="tab" id="tab-streams" data-tab="streams" aria-selected="true" aria-controls="panel-streams">Streams</button>
+      <button class="tab" role="tab" id="tab-audio" data-tab="audio" aria-selected="false" aria-controls="panel-audio" tabindex="-1">Audio</button>
       <button class="tab" role="tab" id="tab-player" data-tab="player" aria-selected="false" aria-controls="panel-player" tabindex="-1">Player</button>
       <button class="tab" role="tab" id="tab-menu" data-tab="menu" aria-selected="false" aria-controls="panel-menu" tabindex="-1">Button</button>
       <button class="tab desktop-only" role="tab" id="tab-external" data-tab="external" aria-selected="false" aria-controls="panel-external" tabindex="-1">External</button>
@@ -47,6 +48,27 @@
           <input type="checkbox" id="toggle-site" checked>
           <span class="toggle-slider"></span>
         </label>
+      </div>
+    </section>
+
+    <!-- ── Audio: effects for this tab's videos and the built-in players ──────
+         Panel from src/audio-ui.mjs, mounted by src/popup-audio.js (popup-audio.bundle.js).
+         Settings are storage.local "audioFx", shared with the players and websites. -->
+    <section class="tab-panel" id="panel-audio" role="tabpanel" aria-labelledby="tab-audio" data-panel="audio" hidden>
+      <div class="setting-row">
+        <div class="setting-label">
+          <span class="setting-title">Effects on websites</span>
+          <span class="setting-desc">Also process videos and audio on web pages (the built-in players always can). Shortcut: Alt+Shift+A changes the preset</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-web-audio">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div id="audio-panel" class="sap-audio-menu sap-audio-inline" role="group"></div>
+      <div id="audio-capture" class="audio-capture" hidden>
+        <p class="setting-desc" id="audio-capture-text"></p>
+        <button type="button" class="save-btn" id="audio-capture-btn">Process whole tab</button>
       </div>
     </section>
 
@@ -87,35 +109,6 @@
           <option value="vidstack">Vidstack (HLS / MP4)</option>
           <option value="shaka">Shaka Player (HLS / DASH / MP4, quality &amp; speed menus)</option>
           <option value="artplayer">ArtPlayer (HLS / DASH / MP4, subtitle offset &amp; size, screenshot, gestures)</option>
-        </select>
-      </div>
-
-      <!-- Audio effects of the built-in players (src/audio-fx.mjs; storage.local "audioFx", shared
-           with the players' Audio button, so a change here reaches open players at once) -->
-      <div class="setting-row column">
-        <div class="setting-label">
-          <span class="setting-title">Audio effects</span>
-          <span class="setting-desc">Normalizer, dialogue boost and volume boost in the browser player (its 🔊 button has all settings). The last choice is used for the next video</span>
-        </div>
-        <select id="audio-preset" class="select-dropdown" aria-label="Audio preset">
-          <option value="off">Off</option>
-          <option value="standard">Standard — evens out loud and quiet parts</option>
-          <option value="cinema">Cinema — keeps the impact, clearer voices</option>
-          <option value="dialogue">Dialogue — quiet voices lifted, loud scenes tamed</option>
-          <option value="night">Night — strongest leveling, low-volume listening</option>
-          <option value="music">Music — volume boost only</option>
-          <option value="custom" hidden>Custom (set in the player)</option>
-        </select>
-        <div class="setting-label" style="margin-top: 8px;">
-          <span class="setting-title">Volume boost</span>
-          <span class="setting-desc">Louder than the player's 100 %; a limiter keeps it from distorting</span>
-        </div>
-        <select id="audio-boost" class="select-dropdown" aria-label="Volume boost">
-          <option value="1">100 % (off)</option>
-          <option value="1.25">125 %</option>
-          <option value="1.5">150 %</option>
-          <option value="1.75">175 %</option>
-          <option value="2">200 %</option>
         </select>
       </div>
 
@@ -427,5 +420,6 @@
 
   <script src="shared.js"></script>
   <script src="popup.js"></script>
+  <script src="popup-audio.bundle.js"></script>
 </body>
 </html>

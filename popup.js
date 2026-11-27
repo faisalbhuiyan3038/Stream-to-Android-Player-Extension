@@ -27,6 +27,7 @@ const defaults = {
   customPatterns: '',
   openStreamLinks: false,
   openMp4Links: false,
+  webAudioFx: false,
   fastBuffering: true,
   fastBufferingParallel: 4,
   bufferAheadSeconds: 0,
@@ -65,8 +66,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('custom-patterns').value = settings.customPatterns || '';
   document.getElementById('toggle-open-stream-links').checked = !!settings.openStreamLinks;
   document.getElementById('toggle-open-mp4-links').checked = !!settings.openMp4Links;
+  document.getElementById('toggle-web-audio').checked = !!settings.webAudioFx;
   document.getElementById('toggle-open-stream-links').addEventListener('change', e => saveSettings({ openStreamLinks: e.target.checked }));
   document.getElementById('toggle-open-mp4-links').addEventListener('change', e => saveSettings({ openMp4Links: e.target.checked }));
+  document.getElementById('toggle-web-audio').addEventListener('change', e => saveSettings({ webAudioFx: e.target.checked }));
   const cacheToggle = document.getElementById('toggle-cache-whole-video');
   const cacheOptions = document.getElementById('cache-options');
   cacheToggle.checked = settings.cacheWholeVideo !== false;
@@ -85,8 +88,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   fastToggle.addEventListener('change', e => saveSettings({ fastBuffering: e.target.checked }));
   document.getElementById('fast-buffering-parallel').addEventListener('change', e => saveSettings({ fastBufferingParallel: parseInt(e.target.value, 10) }));
   document.getElementById('buffer-ahead').addEventListener('change', e => saveSettings({ bufferAheadSeconds: parseInt(e.target.value, 10) }));
-
-  await initAudioControls();
 
   // Floating button controls (all platforms)
   document.getElementById('button-visibility').value = settings.buttonVisibility;
@@ -544,34 +545,3 @@ async function saveSettings(partial) {
   }).catch(() => {});
 }
 
-// Audio effects defaults: the same storage.local key the players use (src/audio-fx.mjs), so the
-// popup and the players' Audio button always show one choice
-async function initAudioControls() {
-  const presetEl = document.getElementById('audio-preset');
-  const boostEl = document.getElementById('audio-boost');
-  const read = async () => ((await browser.storage.local.get('audioFx')).audioFx) || {};
-  const show = (a) => {
-    const preset = a.preset || 'off';
-    presetEl.querySelector('option[value="custom"]').hidden = preset !== 'custom';
-    presetEl.value = preset;
-    const boost = Math.min(2, Math.max(1, +a.boost || 1));
-    // the player allows 5 % steps: show the nearest choice
-    const options = [...boostEl.options].map(o => +o.value);
-    const near = options.reduce((best, v) => (Math.abs(v - boost) < Math.abs(best - boost) ? v : best), 1);
-    boostEl.value = String(near);
-  };
-  try {
-    show(await read());
-  } catch {
-    show({});
-  }
-  const save = async (partial) => {
-    const current = await read().catch(() => ({}));
-    await browser.storage.local.set({ audioFx: { ...current, ...partial } });
-  };
-  presetEl.addEventListener('change', () => save({ preset: presetEl.value }));
-  boostEl.addEventListener('change', () => save({ boost: +boostEl.value }));
-  browser.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes.audioFx && changes.audioFx.newValue) show(changes.audioFx.newValue);
-  });
-}

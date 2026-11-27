@@ -80,6 +80,7 @@ let settings = {
   customPatterns: '', // lines of `type /regex/flags`, see StreamShared.parseCustomPatterns
   openStreamLinks: false, // navigating to a .m3u8 / .mpd URL opens it in the web player
   openMp4Links: false,    // … and .mp4 too (off by default: it would stop plain .mp4 downloads)
+  webAudioFx: false,      // audio effects on websites' videos (src/web-audio.js; popup Audio tab)
   fastBuffering: true,    // built-in players: parallel segment downloads + deeper buffer (src/prefetch.mjs)
   fastBufferingParallel: 4,
   bufferAheadSeconds: 0,  // 0 = automatic (120 s desktop, 60 s phone)
@@ -108,6 +109,12 @@ browser.storage.onChanged.addListener((changes, area) => {
     settings = { ...settings, ...changes.settings.newValue };
     syncLinkRedirectRules();
     if (settings.cleanNames !== cleanNamesBefore) renameAllStreams().catch(() => {});
+    if (!settings.webAudioFx) audioFeatureOff();
+  }
+  if (area === 'local' && changes.audioFx) {
+    syncAudioMenu(changes.audioFx.newValue);
+    // the offscreen document (tab capture) has no storage API
+    if (capturedTabs.size) browser.runtime.sendMessage({ type: 'offscreenAudioSettings', settings: changes.audioFx.newValue }).catch(() => {});
   }
 });
 
@@ -650,10 +657,15 @@ try {
   browser.action.setBadgeBackgroundColor({ color: '#4CAF50' });
 } catch { /* badge is cosmetic */ }
 
+// Purple while audio effects run on the tab ("♪" when no stream is listed)
+const BADGE_COLOR = '#4CAF50';
+const AUDIO_BADGE_COLOR = '#7E57C2';
 function updateBadge(tabId) {
   const count = (detectedStreams.get(tabId) || []).length;
+  const audio = audioRunsOn(tabId);
   try {
-    browser.action.setBadgeText({ tabId, text: count > 0 ? String(count) : '' }).catch(() => {});
+    browser.action.setBadgeText({ tabId, text: count > 0 ? String(count) : audio ? '♪' : '' }).catch(() => {});
+    browser.action.setBadgeBackgroundColor({ tabId, color: audio ? AUDIO_BADGE_COLOR : BADGE_COLOR }).catch(() => {});
   } catch { /* tab may be gone */ }
 }
 
@@ -1019,6 +1031,137 @@ function playerHeaderRuleHeaders(ctx) {
   return headers;
 }
 
+// ─── Audio effects on websites (src/web-audio.js, src/offscreen-audio.js) ─────
+// Web Audio gets silence from media of another server unless it was loaded in CORS mode and the
+// response allows it. While a tab's page wants effects, a session rule adds
+// `Access-Control-Allow-Origin: *` to that tab's media responses, and web-audio.js loads such
+// elements with crossorigin="anonymous" (no cookies, so only media anyone could fetch becomes
+// readable, and only in that tab). Kept until the tab closes or the feature is switched off.
+const AUDIO_CORS_BASE = 1000000000;
+const audioCorsRuleId = (tabId) => AUDIO_CORS_BASE + tabId;
+function audioCorsRule(tabId) {
+  return {
+    id: audioCorsRuleId(tabId),
+    priority: 1,
+    action: {
+      type: 'modifyHeaders',
+      responseHeaders: [{ header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' }]
+    },
+    condition: { tabIds: [tabId], resourceTypes: ['media'] }
+  };
+}
+async function setAudioCorsRule(tabId) {
+  const dnr = browser.declarativeNetRequest;
+  if (!dnr || !dnr.updateSessionRules) return false;
+  await dnr.updateSessionRules({ removeRuleIds: [audioCorsRuleId(tabId)], addRules: [audioCorsRule(tabId)] });
+  return true;
+}
+function removeAudioCorsRule(tabId) {
+  if (!browser.declarativeNetRequest) return Promise.resolve();
+  return browser.declarativeNetRequest.updateSessionRules({ removeRuleIds: [audioCorsRuleId(tabId)] }).catch(() => {});
+}
+
+const audioFrames = new Map(); // tabId → Set(frameId) whose effects are running
+const audioRunsOn = (tabId) => capturedTabs.has(tabId) || !!(audioFrames.get(tabId) || new Set()).size;
+function setAudioFrame(tabId, frameId, active) {
+  const set = audioFrames.get(tabId) || new Set();
+  if (active) set.add(frameId); else set.delete(frameId);
+  if (set.size) audioFrames.set(tabId, set); else audioFrames.delete(tabId);
+  updateBadge(tabId);
+}
+
+// Same order and names as src/audio-presets.mjs PRESET_ORDER / src/audio-dsp.mjs PRESET_NAMES
+// (this file is a classic script and can't import them)
+const AUDIO_PRESETS = [['off', 'Off'], ['standard', 'Standard'], ['cinema', 'Cinema'], ['dialogue', 'Dialogue'], ['night', 'Night'], ['music', 'Music']];
+
+// The built-ins, then the presets the user saved under their own names (`audioFx.presets`, ids
+// `u…`, src/audio-presets.mjs) as [id, name]
+function audioPresetList(fx) {
+  const saved = fx && fx.presets && typeof fx.presets === 'object' ? fx.presets : {};
+  const own = Object.entries(saved)
+    .filter(([id, p]) => /^u[a-z0-9]{1,20}$/.test(id) && p && typeof p.name === 'string' && p.name.trim())
+    .map(([id, p]) => [id, p.name.replace(/\s+/g, ' ').trim().slice(0, 30)]);
+  return [...AUDIO_PRESETS, ...own];
+}
+
+// Picking a preset from the shortcut or the context menu also switches effects on websites on
+async function setAudioPreset(preset) {
+  const fx = (await browser.storage.local.get('audioFx')).audioFx || {};
+  await browser.storage.local.set({ audioFx: { ...fx, preset, edits: null } }); // unsaved changes dropped
+  await settingsReady;
+  if (preset !== 'off' && !settings.webAudioFx) {
+    settings = { ...settings, webAudioFx: true };
+    await browser.storage.local.set({ settings: { ...settings } });
+  }
+}
+
+// Alt+Shift+A: next preset, shown by a short toast on the page
+async function cycleAudioPreset(tab) {
+  const fx = (await browser.storage.local.get('audioFx')).audioFx || {};
+  const list = audioPresetList(fx);
+  const i = list.findIndex(([id]) => id === fx.preset);
+  const [next, name] = list[(i + 1) % list.length];
+  await setAudioPreset(next);
+  if (tab) browser.tabs.sendMessage(tab.id, { type: 'audioToast', text: `Audio: ${name}` }, { frameId: 0 }).catch(() => {});
+}
+
+// Tab capture (Chromium only, opt-in from the popup): the whole tab's audio through the same
+// worklet in an offscreen document, for what Web Audio on the page can't read (DRM, a site's own
+// audio graph). Chrome shows its "sharing this tab" indicator meanwhile.
+const capturedTabs = new Set();
+const sessionStore = browser.storage.session;
+const captureReady = sessionStore
+  ? sessionStore.get('audioCapturedTabs').then(r => { for (const id of r.audioCapturedTabs || []) capturedTabs.add(id); }, () => {})
+  : Promise.resolve();
+const saveCaptured = () => { if (sessionStore) sessionStore.set({ audioCapturedTabs: [...capturedTabs] }).catch(() => {}); };
+const hasOffscreen = () => (browser.offscreen ? browser.offscreen.hasDocument().catch(() => false) : Promise.resolve(false));
+let offscreenCreating = null;
+async function ensureOffscreen() {
+  if (await hasOffscreen()) return;
+  if (!offscreenCreating) {
+    offscreenCreating = browser.offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: ['USER_MEDIA'],
+      justification: "Audio effects for a tab whose audio the page's Web Audio can't read (DRM, the site's own audio graph)"
+    }).finally(() => { offscreenCreating = null; });
+  }
+  await offscreenCreating;
+}
+const tellCaptured = (tabId, on) => browser.tabs.sendMessage(tabId, { type: 'audioCaptured', on }).catch(() => {});
+async function startCapture(tabId, streamId) {
+  if (!browser.offscreen || !browser.tabCapture) throw new Error('Tab capture is not available in this browser');
+  await ensureOffscreen();
+  const fx = (await browser.storage.local.get('audioFx')).audioFx || {};
+  const res = await browser.runtime.sendMessage({ type: 'offscreenCaptureStart', tabId, streamId, settings: fx });
+  if (!res || !res.ok) throw new Error((res && res.error) || 'Capture failed');
+  capturedTabs.add(tabId);
+  saveCaptured();
+  tellCaptured(tabId, true);
+  updateBadge(tabId);
+}
+async function captureEnded(tabId) {
+  if (!capturedTabs.delete(tabId)) return;
+  saveCaptured();
+  tellCaptured(tabId, false);
+  updateBadge(tabId);
+  if (!capturedTabs.size && await hasOffscreen()) browser.offscreen.closeDocument().catch(() => {});
+}
+async function stopCapture(tabId) {
+  if (await hasOffscreen()) await browser.runtime.sendMessage({ type: 'offscreenCaptureStop', tabId }).catch(() => {});
+  await captureEnded(tabId);
+}
+
+async function audioFeatureOff() {
+  const dnr = browser.declarativeNetRequest;
+  if (dnr && dnr.getSessionRules) {
+    const rules = await dnr.getSessionRules().catch(() => []);
+    const ids = rules.map(r => r.id).filter(id => id >= AUDIO_CORS_BASE && id < 2 * AUDIO_CORS_BASE - 100000000);
+    if (ids.length) dnr.updateSessionRules({ removeRuleIds: ids }).catch(() => {});
+  }
+  await captureReady;
+  for (const tabId of [...capturedTabs]) stopCapture(tabId);
+}
+
 function removePlayerHeaderRule(tabId) {
   if (!browser.declarativeNetRequest) return Promise.resolve();
   return browser.declarativeNetRequest.updateSessionRules({ removeRuleIds: [tabId + 1] }).catch(() => {});
@@ -1326,6 +1469,27 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.type === 'nativePing') {
     nativeSend({ action: 'ping' }).then(res => sendResponse(res));
     return true;
+  } else if (message.type === 'audioCors' && sender.tab) {
+    // from web-audio.js of a page that wants effects on an element of another server
+    settingsReady.then(() => (settings.webAudioFx ? setAudioCorsRule(sender.tab.id) : false))
+      .then(ok => sendResponse({ ok }), () => sendResponse({ ok: false }));
+    return true;
+  } else if (message.type === 'audioActive' && sender.tab) {
+    setAudioFrame(sender.tab.id, sender.frameId || 0, !!message.active);
+  } else if (message.type === 'audioCaptureState') {
+    // a page (its own tab) or the popup (`tabId`) asks whether the tab is captured
+    const id = sender.tab ? sender.tab.id : message.tabId;
+    captureReady.then(() => sendResponse({ captured: capturedTabs.has(id) }));
+    return true;
+  } else if (message.type === 'audioCaptureStart' || message.type === 'audioCaptureStop' || message.type === 'audioCaptureEnded') {
+    // only from our own pages: the popup (whose tabCapture.getMediaStreamId call made the
+    // stream id) and the offscreen document (the captured tab closed or its track ended)
+    const ours = !sender.tab && sender.url && sender.url.startsWith(browser.runtime.getURL(''));
+    if (!ours || typeof message.tabId !== 'number') return false;
+    if (message.type === 'audioCaptureEnded') return void captureEnded(message.tabId);
+    const run = message.type === 'audioCaptureStart' ? startCapture(message.tabId, message.streamId) : stopCapture(message.tabId);
+    run.then(() => sendResponse({ ok: true }), e => sendResponse({ ok: false, error: e.message }));
+    return true;
   }
   return false;
 });
@@ -1366,6 +1530,9 @@ function refreshStreamTitles(tabId, tab) {
 browser.tabs.onRemoved.addListener((tabId) => {
   playerTabs.delete(tabId);
   pendingNav.delete(tabId);
+  audioFrames.delete(tabId);
+  removeAudioCorsRule(tabId);
+  captureReady.then(() => { if (capturedTabs.has(tabId)) stopCapture(tabId); });
   runExclusive(tabId, async () => {
     await storageReady;
     forgetAnalyses(tabId);
@@ -1396,6 +1563,7 @@ browser.webRequest.onBeforeRequest.addListener(
       playerTabs.delete(tabId);
       removePlayerHeaderRule(tabId);
     }
+    if (audioFrames.delete(tabId)) updateBadge(tabId);
     runExclusive(tabId, async () => {
       await storageReady;
       forgetAnalyses(tabId);
@@ -1464,16 +1632,48 @@ const MENU_ITEMS = [
   { id: 'ctx-download', title: 'Download video', action: 'download' }
 ];
 
+// "Audio effects" ▸ Off / Standard / … / the user's presets on videos (radio items, the current
+// preset ticked). Rebuilt when the user's presets change, else only the tick moves.
+const AUDIO_MENU_PREFIX = 'ctx-audio-';
+let audioMenuKey = null;
+let audioMenuChain = Promise.resolve();
+function buildAudioMenu(fx) {
+  audioMenuChain = audioMenuChain.then(async () => {
+    const list = audioPresetList(fx);
+    const preset = (fx && fx.preset) || 'off';
+    audioMenuKey = JSON.stringify(list);
+    await Promise.resolve(browser.contextMenus.remove('ctx-audio')).catch(() => {});
+    browser.contextMenus.create({ id: 'ctx-audio', title: 'Audio effects', contexts: ['video', 'audio'] });
+    for (const [id, name] of list) {
+      browser.contextMenus.create({ id: AUDIO_MENU_PREFIX + id, parentId: 'ctx-audio', type: 'radio', title: name, checked: id === preset, contexts: ['video', 'audio'] });
+    }
+  }).catch(() => {});
+  return audioMenuChain;
+}
+function syncAudioMenu(fx) {
+  if (!browser.contextMenus) return;
+  const list = audioPresetList(fx);
+  if (JSON.stringify(list) !== audioMenuKey) return void buildAudioMenu(fx);
+  const preset = (fx && fx.preset) || 'off';
+  for (const [id] of list) {
+    const p = browser.contextMenus.update(AUDIO_MENU_PREFIX + id, { checked: id === preset });
+    if (p && p.catch) p.catch(() => {});
+  }
+}
+
 if (browser.contextMenus) {
   browser.runtime.onInstalled.addListener(() => {
-    browser.contextMenus.removeAll().then(() => {
+    browser.contextMenus.removeAll().then(async () => {
       for (const item of MENU_ITEMS) {
         browser.contextMenus.create({ id: item.id, title: item.title, contexts: ['link', 'video', 'audio'] });
       }
+      await buildAudioMenu((await browser.storage.local.get('audioFx')).audioFx || {});
     }).catch(() => {});
   });
 
   browser.contextMenus.onClicked.addListener(async (info, tab) => {
+    const menuId = String(info.menuItemId);
+    if (menuId.startsWith(AUDIO_MENU_PREFIX)) return void setAudioPreset(menuId.slice(AUDIO_MENU_PREFIX.length)).catch(() => {});
     const item = MENU_ITEMS.find(i => i.id === info.menuItemId);
     const url = info.linkUrl || info.srcUrl;
     if (!item || !url || !tab) return;
@@ -1486,6 +1686,10 @@ if (browser.contextMenus) {
 
 if (browser.commands) {
   browser.commands.onCommand.addListener(async (command) => {
+    if (command === 'audio-preset') {
+      const [active] = await browser.tabs.query({ active: true, currentWindow: true });
+      return void cycleAudioPreset(active).catch(() => {});
+    }
     if (command !== 'send-to-player') return;
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab) return;
