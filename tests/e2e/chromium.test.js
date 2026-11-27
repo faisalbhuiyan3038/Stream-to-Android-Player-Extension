@@ -756,6 +756,27 @@ test('download: fMP4 HLS becomes one seekable MP4 (ftyp, moov, sidx, fragments)'
   assert.ok(media.videoBytes > 0, 'no video decoded');
 });
 
+test('download: "Save again" asks once more before writing another copy', async () => {
+  const page = await ctx.newPage();
+  await page.goto(`chrome-extension://${extId}/download.html?url=${encodeURIComponent(`${ORIGIN}/hls-real/index.m3u8`)}&title=Again`);
+  await until(() => page.evaluate(() => window._download && window._download.state === 'ready'), { timeout: 20000 });
+  const downloads = [];
+  page.on('download', d => { downloads.push(d); d.cancel().catch(() => {}); });
+  await page.click('#start');
+  await until(() => page.evaluate(() => window._download.state === 'done'), { timeout: 30000 });
+  await until(() => downloads.length === 1, { timeout: 10000 });
+  await page.click('#again');
+  await page.waitForTimeout(500);
+  assert.equal(downloads.length, 1, 'the first tap saved another copy');
+  assert.match(await page.textContent('#again'), /Save another copy/);
+  assert.match(await page.textContent('#warning'), /Another copy needs/);
+  await page.click('#again');
+  await until(() => downloads.length === 2, { timeout: 10000 });
+  assert.equal(await page.evaluate(() => window._download.saves), 2);
+  assert.equal(await page.textContent('#again'), 'Save again');
+  await page.close();
+});
+
 test('download: separate audio rendition is merged into the same MP4 (and plays)', async () => {
   const { state, data } = await downloadVia(`${ORIGIN}/hls-real/master.m3u8`);
   assert.equal(state.state, 'done', JSON.stringify(state));
@@ -893,6 +914,25 @@ test('download: a long stream waits in IndexedDB, not RAM, and the storage is re
   assert.ok(left, 'download databases were left behind');
 });
 
+test('browser start removes databases a crashed tab left behind, not the ones of open pages', async () => {
+  const page = await ctx.newPage();
+  await page.goto(`chrome-extension://${extId}/popup.html`);
+  const old = Date.now() - 5 * 60 * 1000;
+  const names = { crashed: `sap-download-${old}-crash`, cache: `sap-cache-${old}-crash`, live: `sap-download-${old}-live` };
+  await page.evaluate(async (names) => {
+    for (const name of Object.values(names)) {
+      await new Promise((ok, bad) => { const r = indexedDB.open(name, 1); r.onupgradeneeded = () => r.result.createObjectStore('segments'); r.onsuccess = () => { r.result.close(); ok(); }; r.onerror = () => bad(r.error); });
+    }
+    navigator.locks.request(names.live, () => new Promise(() => {})); // an open download page
+  }, names);
+  const removed = await sw.evaluate(() => removeLeftoverDatabases());
+  const left = await page.evaluate(async () => (await indexedDB.databases()).map(d => d.name).filter(n => n.startsWith('sap-')));
+  await page.close();
+  assert.equal(removed, 2);
+  assert.ok(!left.includes(names.crashed) && !left.includes(names.cache), `left: ${left}`);
+  assert.ok(left.includes(names.live), 'a database in use was removed');
+});
+
 test('download: a plain file is saved as it is', async () => {
   const { state, data, name } = await downloadVia(`${ORIGIN}/media/real.webm`, 'Plain');
   assert.equal(state.state, 'done', JSON.stringify(state));
@@ -976,8 +1016,21 @@ for (const [name, file] of [['Vidstack/hls.js', 'player.html'], ['Shaka', 'playe
     assert.equal(site.log.big.length, 0, 'Save downloaded segments again');
     assert.equal(saved.state.fromCache, 61);
     assert.equal(saved.state.fromNetwork, 0);
+    assert.equal(saved.state.stored, 0, 'cached segments were copied into the download page');
     assert.deepEqual(boxTypes(saved.data).slice(0, 3), ['ftyp', 'moov', 'sidx']);
     assert.ok(Math.abs(saved.state.duration - 120) < 3, `duration ${saved.state.duration}`);
+    // once saved, a tap asks before writing another copy
+    await until(() => run.page.evaluate(() => /^Saved/.test(document.querySelector('.sap-save').title)), { timeout: 10000 });
+    const pages = ctx.pages().length;
+    const again = await run.page.evaluate(() => {
+      document.querySelector('.sap-save').click();
+      const menu = document.querySelector('.sap-save-menu');
+      const b = menu.querySelector('.sap-save-whole');
+      return { open: !menu.hidden, label: b.hidden ? '' : b.textContent };
+    });
+    assert.deepEqual(again, { open: true, label: 'Save another copy' });
+    await run.page.waitForTimeout(500);
+    assert.equal(ctx.pages().length, pages, 'a second tap opened another download page');
     await saved.dlPage.close();
     await run.page.close();
   });

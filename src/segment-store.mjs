@@ -114,14 +114,43 @@ export class MemoryStore {
   async destroy() { this.map.clear(); }
 }
 
-// IndexedDB if possible, memory otherwise
+// IndexedDB if possible, memory otherwise. An IndexedDB store holds a Web Lock named after its
+// database while the page lives, so cleanup elsewhere can tell it from a crashed tab's leftover.
 export async function openStore(idb = globalThis.indexedDB, options = {}) {
   try {
-    return await IdbStore.open(idb, options);
+    const store = await IdbStore.open(idb, options);
+    holdStoreLock(store.name);
+    return store;
   } catch (e) {
     console.warn('Download storage falls back to memory:', e && e.message);
     return new MemoryStore();
   }
+}
+
+export function holdStoreLock(name, locks = globalThis.navigator && navigator.locks) {
+  try {
+    if (locks) locks.request(name, () => new Promise(() => {})).catch(() => {});
+  } catch { /* no Web Locks */ }
+}
+
+// Leftovers of closed or crashed tabs: databases no live page holds a lock on go after a minute
+// (a page takes its lock right after creating the database). Without Web Locks only old ones go
+// (`fallbackAgeMs`), so a download running in another tab is never touched.
+// The background runs the same rule at browser start (background.js `removeLeftoverDatabases`).
+export async function removeUnusedStores(idb = globalThis.indexedDB, { prefix = PREFIX, fallbackAgeMs = 12 * 3600 * 1000, locks = globalThis.navigator && navigator.locks, now = Date.now() } = {}) {
+  let held = null;
+  try {
+    if (locks && locks.query) {
+      const q = await locks.query();
+      held = new Set([...(q.held || []), ...(q.pending || [])].map(l => l.name));
+    }
+  } catch { /* no Web Locks */ }
+  return removeLeftoverStores(idb, {
+    prefix,
+    now,
+    minAgeMs: held ? 60 * 1000 : fallbackAgeMs,
+    inUse: name => !!held && held.has(name)
+  });
 }
 
 // Databases left behind by downloads whose tab was closed or crashed. Only ones older than

@@ -80,6 +80,7 @@ export function attachSaver(cache, badge, saveNow) {
       await saveNow(mode);
     } finally {
       if (button) button.disabled = false;
+      if (cache.savedWhole) badge.saved = true;
     }
   };
   const prev = cache.onChange;
@@ -100,13 +101,17 @@ export function attachSaver(cache, badge, saveNow) {
 // What Save does in every player. filePlan: the plain-file plan (null for HLS/DASH).
 // choice: what is playing (preselected on the download page). Returns the saved file name when
 // the file was saved right here.
+// After a whole-video save `cache.savedWhole` is set (the Save control then asks before another copy).
 export async function saveCached(cache, { filePlan, url, title, choice, mode = 'whole' }) {
+  const whole = mode !== 'partial' && cache.progress().complete;
+  let name = null;
   if (filePlan) {
-    if (cache.progress().complete) return saveFileFromCache(cache, filePlan, { url, title });
+    if (cache.progress().complete) name = await saveFileFromCache(cache, filePlan, { url, title });
     // not all of it could be kept (storage limit): the download page downloads the file
-    await saveStreamFromCache(cache, { url, title });
-    return null;
+    else await saveStreamFromCache(cache, { url, title });
+  } else {
+    await saveStreamFromCache(cache, { url, title, choice, partial: mode === 'partial' });
   }
-  await saveStreamFromCache(cache, { url, title, choice, partial: mode === 'partial' });
-  return null;
+  if (whole) cache.savedWhole = true;
+  return name;
 }

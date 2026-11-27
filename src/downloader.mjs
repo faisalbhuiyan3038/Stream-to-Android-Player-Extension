@@ -197,10 +197,13 @@ async function fragmentsOf(blob, held) {
 // shaka: the Shaka namespace (for transmuxers). manifest: player.getManifest().
 // choice: { videoId, audioId }. store: where segments wait (segment-store.mjs; IndexedDB in the
 // download page). text: subtitle tracks for the file (see planMp4).
-// Returns { blob, size, duration, tracks, peakHeld, storage }.
+// Returns { blob, size, duration, tracks, peakHeld, storage, stored } (stored: segments copied into `store`).
 // keep(uri, range): only segments it accepts are downloaded (a partial save of what a player has
 // already loaded; gaps are closed by the merger like discontinuities).
-export async function downloadManifest({ shaka, manifest, choice, parallel = 4, signal, onProgress = () => {}, fetchFn, store = new MemoryStore(), text = [], keep = null }) {
+// cachedBlob(uri, range) → Blob | null: segments already stored elsewhere (a player's cache). An
+// unencrypted one is used as it is, not copied into `store`: the file is made of slices of it,
+// so a save from a player needs no second copy of the video on disk.
+export async function downloadManifest({ shaka, manifest, choice, parallel = 4, signal, onProgress = () => {}, fetchFn, store = new MemoryStore(), text = [], keep = null, cachedBlob = null }) {
   const video = choice.videoId != null ? findStream(manifest, 'video', choice.videoId) : null;
   const audio = choice.audioId != null ? findStream(manifest, 'audio', choice.audioId) : null;
   if (!video && !audio) throw new Error('Nothing selected to download');
@@ -240,19 +243,29 @@ export async function downloadManifest({ shaka, manifest, choice, parallel = 4, 
   const held = heldCounter();
   const report = () => onProgress({ done, total, bytes, seconds: (Date.now() - started) / 1000 });
   const rawKey = (job, i) => `raw/${job.index}/${i}`;
+  let stored = 0;
+  // a segment's bytes: the cached Blob, else the stored copy
+  const segmentBlob = (job, i) => job.blobs[i] || store.get(rawKey(job, i));
 
   // 1. Download (and decrypt) every segment, several at a time; each goes to the store at once
   for (const job of jobs) {
     if (job.sameBytesAs != null) continue;
+    job.blobs = [];
     const initRef = initSegmentOf(shaka, job.refs[0]);
     job.init = initRef ? await fetchBytes(uriOf(initRef), { ...byteRange(initRef), signal, fetchFn }) : null;
     // an EXT-X-KEY before the EXT-X-MAP encrypts the init segment too
     const initKey = initRef && aesKeyOf(initRef);
     if (job.init && initKey) job.init = await decryptAes128(job.init, initKey, initKey.firstMediaSequenceNumber);
     await runPool(job.refs.map((ref, i) => async () => {
+      const key = aesKeyOf(ref);
+      const cached = !key && cachedBlob ? await cachedBlob(uriOf(ref), byteRange(ref)) : null;
+      if (cached) {
+        if (i === 0) job.kind = sniffSegment(new Uint8Array(await cached.arrayBuffer()));
+        job.blobs[i] = cached;
+        return cached.size;
+      }
       let data = await fetchBytes(uriOf(ref), { ...byteRange(ref), signal, fetchFn });
       held.add(data.length);
-      const key = aesKeyOf(ref);
       if (key) {
         const plain = await decryptAes128(data, key, key.firstMediaSequenceNumber + job.nums[i]);
         held.add(plain.length);
@@ -261,6 +274,7 @@ export async function downloadManifest({ shaka, manifest, choice, parallel = 4, 
       }
       if (i === 0) job.kind = sniffSegment(data);
       await store.put(rawKey(job, i), data);
+      stored++;
       held.sub(data.length);
       return data.length;
     }), parallel, (i, n) => { done++; bytes += n; report(); });
@@ -275,7 +289,7 @@ export async function downloadManifest({ shaka, manifest, choice, parallel = 4, 
     if (job.kind === 'fmp4' || job.kind === 'unknown') {
       if (!job.init) throw new Error(job.kind === 'unknown' ? 'Unsupported segment format' : 'fMP4 stream without an initialization segment');
       const fragments = [];
-      for (let i = 0; i < job.refs.length; i++) fragments.push(...await fragmentsOf(await store.get(rawKey(job, i)), held));
+      for (let i = 0; i < job.refs.length; i++) fragments.push(...await fragmentsOf(await segmentBlob(job, i), held));
       sources[job.index] = { init: job.init, fragments };
       continue; // a muxed-audio sibling has nothing to add: the fMP4 init already has both tracks
     }
@@ -287,7 +301,7 @@ export async function downloadManifest({ shaka, manifest, choice, parallel = 4, 
     for (let i = 0; i < job.refs.length; i++) {
       if (signal && signal.aborted) throw new Error('Cancelled');
       const ref = job.refs[i];
-      const raw = new Uint8Array(await (await store.get(rawKey(job, i))).arrayBuffer());
+      const raw = new Uint8Array(await (await segmentBlob(job, i)).arrayBuffer());
       held.add(raw.length);
       for (const o of outs) {
         const out = await o.tx.transmux(raw, o.job.stream, ref, endOf(ref) - startOf(ref), o.job.contentType);
@@ -301,7 +315,8 @@ export async function downloadManifest({ shaka, manifest, choice, parallel = 4, 
         o.fragments.push(...await fragmentsOf(await store.get(key), held));
       }
       held.sub(raw.length);
-      await store.delete(rawKey(job, i));
+      if (job.blobs[i]) job.blobs[i] = null; // the cache's copy stays where it is
+      else await store.delete(rawKey(job, i));
     }
     for (const o of outs) {
       o.tx.destroy();
@@ -317,7 +332,7 @@ export async function downloadManifest({ shaka, manifest, choice, parallel = 4, 
   const plan = planMp4(sources.filter(Boolean), { text });
   const blob = new Blob([...plan.header, ...plan.body.flatMap(f => [f.moof, f.rest])], { type: 'video/mp4' });
   if (blob.size !== plan.size) throw new Error(`Assembled ${blob.size} bytes, expected ${plan.size}`);
-  return { blob, size: plan.size, duration: plan.duration, zero: plan.zero, tracks: plan.tracks, peakHeld: held.peak, storage: store.kind || 'memory' };
+  return { blob, size: plan.size, duration: plan.duration, zero: plan.zero, tracks: plan.tracks, peakHeld: held.peak, storage: store.kind || 'memory', stored };
 }
 
 // A plain media file (mp4, webm, …): streamed into the store in chunks of up to 4 MB.

@@ -1,7 +1,11 @@
 // Unit tests for the helpers of src/downloader.mjs (the full flow runs in tests/e2e/chromium.test.js).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sniffSegment, sequenceIv, runPool, safeFileName, describeManifest, uriOf, initSegmentOf, aesKeyOf, fetchBytes } from '../src/downloader.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { sniffSegment, sequenceIv, runPool, safeFileName, describeManifest, uriOf, initSegmentOf, aesKeyOf, fetchBytes, downloadManifest } from '../src/downloader.mjs';
+import { MemoryStore } from '../src/segment-store.mjs';
 
 test('sniffSegment: TS, fMP4, ADTS/AAC (with ID3), MP3, unknown', () => {
   const ts = new Uint8Array(376); ts[0] = 0x47; ts[188] = 0x47;
@@ -90,3 +94,67 @@ test('Shaka reference helpers work with minified field names', () => {
   assert.equal(aesKeyOf({ getUris: () => [] }), null);
   assert.equal(initSegmentOf(shaka, { getUris: () => [] }), null);
 });
+
+// ─── segments already in a player's cache ────────────────────────────────────
+// A player's Save hands its cache to the download page. Unencrypted cached segments must be used
+// as they are (the MP4 made of slices of them), not copied into the page's own store: a second
+// copy of a long video on disk is what can fill it.
+{
+  const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), 'e2e', 'fixtures', 'hls');
+  const read = f => new Uint8Array(fs.readFileSync(path.join(fixtures, f)));
+  const segNames = fs.readFileSync(path.join(fixtures, 'index.m3u8'), 'utf8').split(/\r?\n/).filter(l => l.endsWith('.m4s'));
+  const files = new Map([['init.mp4', read('init.mp4')], ...segNames.map(n => [n, read(n)])]);
+
+  // the shape of Shaka's manifest the downloader reads; `encrypted`: segment index → AES key
+  const manifestOf = (encrypted = new Map()) => {
+    const initRef = { getUris: () => ['init.mp4'], startByte: 0, endByte: null };
+    const refs = segNames.map((n, i) => ({
+      getUris: () => [n], getStartTime: () => i * 2, getEndTime: () => i * 2 + 2,
+      startByte: 0, endByte: null, initSegmentReference: initRef, aesKey: encrypted.get(i) || null
+    }));
+    const video = { id: 1, codecs: 'avc1.42e01e', createSegmentIndex: async () => {}, segmentIndex: refs };
+    return { variants: [{ video }] };
+  };
+  const counted = (bytesOf) => {
+    const asked = [];
+    const fetchFn = async (u) => { asked.push(u); return new Response(bytesOf(u)); };
+    return { asked, fetchFn };
+  };
+  const bytesOfBlob = async b => new Uint8Array(await b.arrayBuffer());
+
+  test('downloadManifest: cached segments are used in place, not copied into the store', async () => {
+    const plain = counted(u => files.get(u));
+    const fromNetwork = await downloadManifest({ shaka: {}, manifest: manifestOf(), choice: { videoId: 1 }, fetchFn: plain.fetchFn, store: new MemoryStore() });
+    assert.equal(fromNetwork.stored, segNames.length);
+
+    const net = counted(u => files.get(u));
+    const store = new MemoryStore();
+    const asked = [];
+    const cachedBlob = async (u, range) => { asked.push([u, range]); return new Blob([files.get(u)]); };
+    const fromCache = await downloadManifest({ shaka: {}, manifest: manifestOf(), choice: { videoId: 1 }, fetchFn: net.fetchFn, store, cachedBlob });
+    assert.equal(fromCache.stored, 0, 'nothing copied');
+    assert.deepEqual(await store.keys(), []);
+    assert.deepEqual(net.asked, ['init.mp4'], 'only the init segment from the network');
+    assert.deepEqual(asked[0], [segNames[0], { start: 0, end: null }]);
+    assert.deepEqual(await bytesOfBlob(fromCache.blob), await bytesOfBlob(fromNetwork.blob), 'the same file');
+  });
+
+  test('downloadManifest: a cache miss is fetched and stored; an encrypted segment is never taken from the cache as it is', async () => {
+    const raw = crypto.getRandomValues(new Uint8Array(16));
+    const cryptoKey = await crypto.subtle.importKey('raw', raw, 'AES-CBC', false, ['encrypt', 'decrypt']);
+    const iv = new Uint8Array(16);
+    const aesKey = { cryptoKey, iv, blockCipherMode: 'CBC', firstMediaSequenceNumber: 0 };
+    const cipher = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv }, cryptoKey, files.get(segNames[1])));
+    const bytesOf = u => (u === segNames[1] ? cipher : files.get(u));
+    const reference = await downloadManifest({ shaka: {}, manifest: manifestOf(), choice: { videoId: 1 }, fetchFn: counted(u => files.get(u)).fetchFn });
+
+    const net = counted(bytesOf);
+    const asked = [];
+    const cachedBlob = async (u) => { asked.push(u); return u === segNames[2] ? null : new Blob([bytesOf(u)]); };
+    const out = await downloadManifest({ shaka: {}, manifest: manifestOf(new Map([[1, aesKey]])), choice: { videoId: 1 }, fetchFn: net.fetchFn, store: new MemoryStore(), cachedBlob });
+    assert.ok(!asked.includes(segNames[1]), 'the encrypted segment goes through fetch + decrypt');
+    assert.deepEqual(net.asked.sort(), ['init.mp4', segNames[1], segNames[2]].sort());
+    assert.equal(out.stored, 2, 'the decrypted segment and the cache miss');
+    assert.deepEqual(await bytesOfBlob(out.blob), await bytesOfBlob(reference.blob));
+  });
+}

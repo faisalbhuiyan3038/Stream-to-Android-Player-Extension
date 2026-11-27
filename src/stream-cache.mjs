@@ -19,7 +19,7 @@
 // Engine glue: src/cache-hls.mjs (hls.js fragment loader + plan) and src/cache-shaka.mjs (Shaka
 // networking scheme + plan). Plain files are cached as byte ranges (planFile).
 
-import { openStore, removeLeftoverStores } from './segment-store.mjs';
+import { openStore, removeUnusedStores } from './segment-store.mjs';
 import { setTimer as workerTimer } from './timer.mjs';
 
 export const CACHE_PREFIX = 'sap-cache-';
@@ -484,35 +484,12 @@ export async function planFile(url, { fetchFn = (u, i) => globalThis.fetch(u, i)
 
 // ─── for the player pages ────────────────────────────────────────────────────
 
-// Each player holds a Web Lock named after its cache database while it is open, so another
-// player's cleanup can tell a live cache from one left behind by a closed or crashed tab.
-function holdLock(name) {
-  try {
-    if (globalThis.navigator && navigator.locks) navigator.locks.request(name, () => new Promise(() => {})).catch(() => {});
-  } catch { /* no Web Locks */ }
-}
-
-async function cleanupLeftovers() {
-  let held = null;
-  try {
-    if (navigator.locks && navigator.locks.query) {
-      const q = await navigator.locks.query();
-      held = new Set([...(q.held || []), ...(q.pending || [])].map(l => l.name));
-    }
-  } catch { /* no Web Locks */ }
-  await removeLeftoverStores(globalThis.indexedDB, {
-    prefix: CACHE_PREFIX,
-    minAgeMs: held ? 60 * 1000 : 48 * 3600 * 1000,
-    inUse: name => !!held && held.has(name)
-  });
-}
-
-// Opens the player's cache: an IndexedDB database of its own (deleted when the page goes away),
-// with the byte limit lowered to what the browser says is free.
+// Opens the player's cache: an IndexedDB database of its own (deleted when the page goes away;
+// it holds a Web Lock so other pages' cleanup leaves it alone), with the byte limit lowered to
+// what the browser says is free.
 export async function openPlayerCache({ maxBytes, parallel = 4, mobile = false, onChange } = {}) {
   const store = await openStore(globalThis.indexedDB, { prefix: CACHE_PREFIX });
-  if (store.kind === 'indexeddb') holdLock(store.name);
-  cleanupLeftovers().catch(() => {});
+  removeUnusedStores(globalThis.indexedDB, { prefix: CACHE_PREFIX, fallbackAgeMs: 48 * 3600 * 1000 }).catch(() => {});
   let limit = maxBytes || (mobile ? 3 : 8) * 1024 * MB;
   if (store.kind !== 'indexeddb') limit = Math.min(limit, (mobile ? 300 : 1500) * MB); // RAM
   try {

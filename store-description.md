@@ -3,6 +3,8 @@ Firefox addon store supports some markdown, so only those are used below. Chrome
 A browser extension to detect streaming videos (M3U8, MPD, MP4) and send them to your preferred media player on Android and Windows, play them in the browser, or save them as MP4. Supports VLC, MPV, MX Player, and other players with command-line arguments.
 
 **Changelog**
+1.9
+- Saving big videos is safer. Saving from the built-in player no longer keeps a second copy of the video on disk while it saves. "Save again" now asks before it saves another full copy. Storage left behind by a crashed tab or browser is cleaned up automatically when the browser starts.
 1.8
 - New: audio effects in the built-in players. A smart volume normalizer makes quiet dialogue easy to hear in films with loud action, a volume boost goes up to 200 % without distortion, and a dialogue boost brings voices forward (with 5.1 surround it raises the voice channel). Presets: Standard, Cinema, Dialogue, Night, Music, or your own: change a preset and save it, or save it as a new named preset. Plus bass, treble and mono. Light on the computer: nothing runs while it is off.
 - New (optional, off by default): the same audio effects on videos and audio on any website, including videos served from other servers and players hidden in shadow DOM. Nothing covers the video: use the popup's new Audio tab, the Alt+Shift+A shortcut or the right-click menu. Chrome/Edge can also process a whole tab for DRM-protected sites.
@@ -80,8 +82,14 @@ A browser extension to detect streaming videos (M3U8, MPD, MP4) and send them to
 **Download**
 - Save videos as **MP4** right in the browser, on desktop and Android. No extra setup needed.
 - Choose the quality and audio language first.
-- Or press Save in the built-in player: the video it already loaded is saved without downloading it again.
+- Or press Save in the built-in player: the video it already loaded is saved without downloading it again or copying it a second time.
+- Safe with big videos: the video waits on disk, not in memory. You are asked before another full copy is saved, and storage left by a crash is cleaned up automatically.
 - On desktop you can also download with yt-dlp or ffmpeg through the native host.
+
+**Audio Effects**
+- In the built-in players: a smart volume normalizer for quiet dialogue and loud action, volume boost up to 200 % without distortion, dialogue boost (raises the voice channel of 5.1 surround), bass, treble and mono.
+- Presets: Standard, Cinema, Dialogue, Night, Music. Change one and save it, or save your own named presets.
+- Optional, off by default: the same effects on videos and audio on any website, controlled from the popup's Audio tab, Alt+Shift+A or the right-click menu. Chrome/Edge can also process a whole tab (for DRM-protected sites).
 
 **Platform Support**
 - **Android**: Firefox for Android.
@@ -103,7 +111,7 @@ A browser extension to detect streaming videos (M3U8, MPD, MP4) and send them to
 
 **Customization**
 - **Player Preferences**: Choose VLC, MPV, or custom player paths.
-- **Keyboard Shortcuts**: Fullscreen, play/pause, volume control (in-browser player).
+- **Keyboard Shortcuts**: Fullscreen, play/pause, volume control (in-browser player); Shift+↑/↓ volume boost and A for the next audio preset; Alt+Shift+A for the next audio preset on websites.
 - **Advanced Options**:
   - **Subtitles**: VTT, SRT, ASS and TTML in the built-in players, and sent to VLC/MPV.
   - **Quality Selection**: Auto-detected from stream metadata; pick one before playing or downloading.
@@ -187,4 +195,5 @@ On Windows, Chrome/Edge also need the extension ID: run install.bat <extension-i
 - **Downloads**:
   - Keep the download tab open until it says the file is saved.
   - Make sure there is enough free storage (about twice the video's size).
+  - The file is saved automatically when it is ready; "Save again" saves another full copy, so only use it if the first one is missing.
   - Protected (DRM) videos and live streams cannot be downloaded.

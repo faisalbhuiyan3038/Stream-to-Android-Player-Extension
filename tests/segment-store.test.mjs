@@ -3,7 +3,7 @@
 // the fallback decision and the clean-up of databases left by closed tabs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MemoryStore, openStore, removeLeftoverStores } from '../src/segment-store.mjs';
+import { MemoryStore, openStore, removeLeftoverStores, removeUnusedStores } from '../src/segment-store.mjs';
 
 test('MemoryStore: put/get/delete, values become Blobs, missing keys fail clearly', async () => {
   const s = new MemoryStore();
@@ -40,4 +40,30 @@ test('removeLeftoverStores: only our databases older than the limit (a running d
   assert.equal(await removeLeftoverStores(idb, { now }), 1);
   assert.deepEqual(deleted, [names[0]]);
   assert.equal(await removeLeftoverStores({}, { now }), 0, 'browsers without indexedDB.databases() are left alone');
+});
+
+test('removeUnusedStores: a database no live page holds a lock on goes after a minute; without Web Locks only old ones', async () => {
+  const now = 1_000_000_000_000;
+  const hour = 3600 * 1000;
+  const names = [
+    `sap-download-${now - 5 * 60 * 1000}-crash`, // left by a crash 5 minutes ago, unlocked: removed
+    `sap-download-${now - 5 * 60 * 1000}-live`, // a download tab open right now (locked): kept
+    `sap-download-${now - 20 * 1000}-new` // just created, lock maybe not taken yet: kept
+  ];
+  const fakeIdb = () => {
+    const deleted = [];
+    return {
+      deleted,
+      databases: async () => names.map(name => ({ name })),
+      deleteDatabase: (name) => { deleted.push(name); const r = {}; setTimeout(() => r.onsuccess && r.onsuccess()); return r; }
+    };
+  };
+  const idb = fakeIdb();
+  const locks = { query: async () => ({ held: [{ name: names[1] }], pending: [] }) };
+  assert.equal(await removeUnusedStores(idb, { now, locks }), 1);
+  assert.deepEqual(idb.deleted, [names[0]]);
+
+  const noLocks = fakeIdb();
+  assert.equal(await removeUnusedStores(noLocks, { now, locks: null }), 0, 'within 12 h nothing goes without Web Locks');
+  assert.equal(await removeUnusedStores(noLocks, { now: now + 13 * hour, locks: null }), 3);
 });

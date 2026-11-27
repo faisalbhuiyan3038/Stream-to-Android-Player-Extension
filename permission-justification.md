@@ -1,5 +1,5 @@
 Permission justifications for store review (Chrome Web Store "Privacy practices" tab, addons.mozilla.org review notes).
-Plain text on purpose: paste each block into the matching field. Applies to version 1.8.
+Plain text on purpose: paste each block into the matching field. Applies to version 1.9.
 
 ==================================================
 SINGLE PURPOSE
@@ -63,8 +63,11 @@ The extension does not collect, sell or send any user data to the developer or a
 Data categories to tick: "Web history" and "Website content" (handled locally only, to provide the single purpose). Certify: not sold, not used for unrelated purposes, not used for creditworthiness or lending.
 
 ==================================================
-NOTE FOR REVIEWERS (version 1.7)
+NOTE FOR REVIEWERS (version 1.9)
 ==================================================
+No new permissions in 1.9 and no manifest change other than the version. The changes are in how the built-in downloader saves large videos (no second copy on disk, a confirmation before saving another copy) and in removing the extension's own leftover download storage at browser start.
+
+From version 1.7:
 No new permissions in 1.7. The only manifest change is a third built-in player page (player-art.html) added to web_accessible_resources next to the two existing player pages, so the stream button can open it like the others. All player code (including ArtPlayer) is bundled in the package.
 
 From version 1.6:

@@ -5,7 +5,7 @@ import { getVideoUrl, getTitle, getSubtitleList } from './page-params.mjs';
 import { describeManifest, downloadManifest, downloadFile, safeFileName, textStreamsOf, loadTextStream, segmentUrisOf } from './downloader.mjs';
 import { loadSubtitleAsVtt, parseVttCues, cuesToSrt } from './subtitles.mjs';
 import { bufferingSettings } from './prefetch.mjs';
-import { openStore, removeLeftoverStores, IdbStore } from './segment-store.mjs';
+import { openStore, removeUnusedStores, IdbStore } from './segment-store.mjs';
 import { segmentKey, parseRange } from './stream-cache.mjs';
 import { registerCacheScheme } from './cache-shaka.mjs';
 
@@ -40,6 +40,14 @@ registerCacheScheme(shaka, () => cacheStore && {
   get: (u, start, end) => cacheStore.get(segmentKey(u, start, end)).then(b => b.arrayBuffer()),
   put: () => {}
 });
+
+// A segment the player already stored, as its Blob: the MP4 is made of slices of it, so it is not
+// copied into this page's store (a second copy of a 2 GB video could fill the disk). This page's
+// open connection to the player's database keeps it alive: the player's deleteDatabase (on
+// pagehide) waits until this page has closed too.
+const cachedBlob = (u, { start, end }) => (cacheStore
+  ? cacheStore.get(segmentKey(u, start, end)).then(b => { state.fromCache++; return b; }, () => null)
+  : Promise.resolve(null));
 
 async function cachedFetch(u, init = {}) {
   if (cacheStore) {
@@ -90,7 +98,7 @@ function getStore() {
   }
   return storePromise;
 }
-removeLeftoverStores().catch(() => {});
+removeUnusedStores().catch(() => {});
 
 function save(result, name) {
   const blob = result.blob;
@@ -324,7 +332,9 @@ async function main() {
     if (storageKind === 'memory' && mobile && bytes > PHONE_WARN_BYTES) {
       warning = 'This browser does not allow storing the download on disk here (private mode?), so the whole video stays in memory until it is saved. On a phone, a lower quality is safer.';
     } else if (bytes > 1024 * 1024 * 1024) {
-      warning = `Needs about ${mb(bytes * 2)} of free storage while it downloads (the segments, then the saved file).`;
+      warning = cacheStore
+        ? `Needs up to ${mb(bytes * 2)} of free storage (the player's copy, then the saved file).`
+        : `Needs about ${mb(bytes * 2)} of free storage while it downloads (the segments, then the saved file).`;
     }
     if (partial) warning = 'Only the part the player has loaded so far is saved; missing stretches are skipped.';
     $('warning').hidden = !warning;
@@ -356,7 +366,7 @@ async function main() {
       const result = await downloadManifest({
         text,
         store: await getStore(),
-        shaka, manifest, parallel, signal: controller.signal, fetchFn: cachedFetch,
+        shaka, manifest, parallel, signal: controller.signal, fetchFn: cachedFetch, cachedBlob,
         keep: partial && cacheStore ? (u, r) => cachedKeys.has(segmentKey(u, r.start, r.end)) : null,
         choice: {
           videoId: info.videos.length ? Number(quality.value) : null,
@@ -384,7 +394,7 @@ function finish(result, name, type, subtitles = [], srtFiles = false) {
   const fileName = name && name.trim() ? name.trim() : 'video.mp4';
   save(result, fileName, type);
   if (srtFiles && subtitles.length) saveSrtFiles(subtitles, fileName, result.zero || 0);
-  Object.assign(state, { state: 'done', size: result.size, duration: result.duration || 0, tracks: result.tracks || [], name: fileName, peakHeld: result.peakHeld, storage: result.storage });
+  Object.assign(state, { state: 'done', size: result.size, duration: result.duration || 0, tracks: result.tracks || [], name: fileName, peakHeld: result.peakHeld, storage: result.storage, stored: result.stored });
   $('cancel').hidden = true;
   $('progress').value = $('progress').max;
   const embedded = (result.tracks || []).filter(t => t.handler === 'sbtl').length;
@@ -393,9 +403,39 @@ function finish(result, name, type, subtitles = [], srtFiles = false) {
     srtFiles && subtitles.length ? `${subtitles.length} .srt file${subtitles.length > 1 ? 's' : ''}` : '',
     state.subtitleErrors.length ? `skipped ${state.subtitleErrors.join('; ')}` : ''
   ].filter(Boolean).join(' · ');
-  setStatus(`Saved ${fileName} (${mb(result.size)}${result.duration ? `, ${clock(result.duration)}` : ''}).${subNote ? ` Subtitles: ${subNote}.` : ''}`, 'done');
-  $('again').hidden = false;
-  $('again').onclick = () => save(result, fileName, type);
+  setStatus(`Saved ${fileName} to your downloads (${mb(result.size)}${result.duration ? `, ${clock(result.duration)}` : ''}).${subNote ? ` Subtitles: ${subNote}.` : ''}`, 'done');
+  $('warning').hidden = true;
+  armSaveAgain(() => { save(result, fileName, type); state.saves++; }, result.size);
+  state.saves = 1;
+}
+
+// "Save again" writes another full copy next to the first (and the segments stay on disk until
+// this tab closes): for a big video that can fill the disk, so it takes a second tap to confirm.
+function armSaveAgain(saveAgain, size) {
+  const button = $('again');
+  const idle = 'Save again';
+  let armedUntil = 0;
+  let timer = null;
+  const reset = () => {
+    armedUntil = 0;
+    button.textContent = idle;
+    $('warning').hidden = true;
+  };
+  reset();
+  button.hidden = false;
+  button.onclick = () => {
+    clearTimeout(timer);
+    if (Date.now() < armedUntil) {
+      reset();
+      saveAgain();
+      return;
+    }
+    armedUntil = Date.now() + 4000;
+    button.textContent = `Save another copy (${mb(size)})?`;
+    $('warning').textContent = `Already saved to your downloads. Another copy needs ${mb(size)} more free space; tap again to save it.`;
+    $('warning').hidden = false;
+    timer = setTimeout(reset, 4000);
+  };
 }
 
 main().catch(fail);

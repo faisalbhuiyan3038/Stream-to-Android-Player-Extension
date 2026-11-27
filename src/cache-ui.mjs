@@ -2,7 +2,8 @@
 // with the other controls and never sits on the picture). A thin ring around the icon fills as
 // the video loads and it shows a tick when everything is in. Tapping it saves (when complete) or
 // opens a small menu with the status and the choices: the whole video (saved as soon as it is
-// loaded) or the part loaded so far.
+// loaded) or the part loaded so far. Once saved, a tap opens the menu instead ("Save another
+// copy"): every save writes the whole file again, and a few of a 2 GB video fill a disk.
 //   onSave(mode, button): 'whole' | 'partial'. canSavePart(): whether "Loaded part" is offered.
 //   menuHost: the element the menu is attached to (the one that goes fullscreen).
 
@@ -51,11 +52,13 @@ export function createSaveControl({ onSave, canSavePart = () => true, menuHost =
 
   let last = null;
   let pending = false;
+  let saved = false;
   const pctOf = p => (p && p.total ? Math.floor(p.done / p.total * 100) : 0);
   const describe = () => {
     const p = last;
     if (!p) return 'Loading the whole video';
     const pct = pctOf(p);
+    if (p.complete && saved) return `Saved · another copy needs ${size(p.bytes)} more space`;
     if (p.complete) return `Whole video loaded · ${size(p.bytes)} · tap to save`;
     if (pending) return `Will save when loaded · ${pct}%`;
     if (p.windowMode) return `Loading ahead · storage limit reached · ${pct}% kept`;
@@ -72,7 +75,8 @@ export function createSaveControl({ onSave, canSavePart = () => true, menuHost =
     btn.title = text;
     btn.setAttribute('aria-label', text);
     status.textContent = text;
-    whole.hidden = pending || !!p.complete;
+    whole.hidden = pending || (!!p.complete && !saved);
+    whole.textContent = p.complete && saved ? 'Save another copy' : 'Save whole video';
     part.hidden = pending || !!p.complete || !canSavePart();
     cancel.hidden = !pending;
     if (!menu.hidden) pop.place();
@@ -90,7 +94,7 @@ export function createSaveControl({ onSave, canSavePart = () => true, menuHost =
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
     if (!menu.hidden) return close();
-    if (last && last.complete) return fire('whole', btn);
+    if (last && last.complete && !saved) return fire('whole', btn);
     open();
   });
   whole.addEventListener('click', (e) => { e.stopPropagation(); fire('whole', whole); });
@@ -106,6 +110,12 @@ export function createSaveControl({ onSave, canSavePart = () => true, menuHost =
     },
     get progress() { return last; },
     get pending() { return pending; },
+    // the whole video was saved once (attachSaver sets it)
+    get saved() { return saved; },
+    set saved(on) {
+      saved = !!on;
+      render();
+    },
     set pending(on) {
       pending = !!on;
       render();

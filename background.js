@@ -25,7 +25,42 @@ browser.runtime.onStartup.addListener(() => {
   browser.storage.local.remove(['detectedStreams', 'detectedSubtitles']);
   detectedStreams.clear();
   detectedSubtitles.clear();
+  removeLeftoverDatabases().catch(() => {});
 });
+browser.runtime.onInstalled.addListener(() => { removeLeftoverDatabases().catch(() => {}); });
+
+// Download pages and player caches keep their segments in IndexedDB databases that the page
+// deletes when it closes. A crashed tab or browser leaves them behind (gigabytes for a long
+// video), so they are removed at browser start without waiting for such a page to open again.
+// Same rule as removeUnusedStores in src/segment-store.mjs: a live page holds a Web Lock named
+// after its database; databases nobody holds go once a minute old (without Web Locks: only old
+// ones, so a download running in another tab is never touched).
+const LEFTOVER_DATABASES = [['sap-download-', 12 * 3600 * 1000], ['sap-cache-', 48 * 3600 * 1000]];
+async function removeLeftoverDatabases() {
+  const idb = globalThis.indexedDB;
+  if (!idb || typeof idb.databases !== 'function') return 0;
+  let held = null;
+  try {
+    if (navigator.locks && navigator.locks.query) {
+      const q = await navigator.locks.query();
+      held = new Set([...(q.held || []), ...(q.pending || [])].map(l => l.name));
+    }
+  } catch { /* no Web Locks */ }
+  let removed = 0;
+  for (const { name } of await idb.databases()) {
+    const rule = name && LEFTOVER_DATABASES.find(([prefix]) => name.startsWith(prefix));
+    if (!rule) continue;
+    const created = parseInt(name.slice(rule[0].length), 10);
+    const minAge = held ? 60 * 1000 : rule[1];
+    if (!(created > 0) || Date.now() - created < minAge || (held && held.has(name))) continue;
+    await new Promise(resolve => {
+      const r = idb.deleteDatabase(name);
+      r.onsuccess = r.onerror = r.onblocked = () => resolve();
+    });
+    removed++;
+  }
+  return removed;
+}
 
 function saveStreams() {
   browser.storage.local.set({
