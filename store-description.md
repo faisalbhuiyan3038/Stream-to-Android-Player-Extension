@@ -8,6 +8,7 @@ A browser extension to detect streaming videos (M3U8, MPD, MP4) and send them to
 - Fixed: videos played without sound on sites that keep the audio in a separate track. The stream list now shows only the main playlist, and picking a quality keeps the sound.
 - Fixed: mpv could quit at once on servers that check the Origin header; it now gets it.
 - Fixed (Chrome/Edge): the download page and players now open inside incognito windows. Streams found in incognito are kept in memory only.
+- New (Chrome/Edge, optional): "Save straight to a folder" on the download page writes the video to a folder you choose as it downloads, so long videos in incognito windows do not have to fit in memory.
 1.8
 - New: audio effects in the built-in players. A smart volume normalizer makes quiet dialogue easy to hear in films with loud action, a volume boost goes up to 200 % without distortion, and a dialogue boost brings voices forward (with 5.1 surround it raises the voice channel). Presets: Standard, Cinema, Dialogue, Night, Music, or your own: change a preset and save it, or save it as a new named preset. Plus bass, treble and mono. Light on the computer: nothing runs while it is off.
 - New (optional, off by default): the same audio effects on videos and audio on any website, including videos served from other servers and players hidden in shadow DOM. Nothing covers the video: use the popup's new Audio tab, the Alt+Shift+A shortcut or the right-click menu. Chrome/Edge can also process a whole tab for DRM-protected sites.

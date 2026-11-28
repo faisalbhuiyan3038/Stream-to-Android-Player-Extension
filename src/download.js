@@ -5,7 +5,7 @@ import { getVideoUrl, getTitle, getSubtitleList } from './page-params.mjs';
 import { describeManifest, downloadManifest, downloadFile, safeFileName, textStreamsOf, loadTextStream, segmentUrisOf } from './downloader.mjs';
 import { loadSubtitleAsVtt, parseVttCues, cuesToSrt } from './subtitles.mjs';
 import { bufferingSettings } from './prefetch.mjs';
-import { openStore, removeUnusedStores, IdbStore } from './segment-store.mjs';
+import { openStore, removeUnusedStores, IdbStore, FileStore } from './segment-store.mjs';
 import { segmentKey, parseRange } from './stream-cache.mjs';
 import { registerCacheScheme } from './cache-shaka.mjs';
 
@@ -100,6 +100,87 @@ function getStore() {
 }
 removeUnusedStores().catch(() => {});
 
+// ─── optional: save straight to a folder ──────────────────────────────────────
+// Chromium desktop (File System Access): the segments wait as files in "<name>.parts" inside a
+// folder the user picks, and the MP4 is written there, instead of browser storage + a download.
+// Off by default. Useful in incognito windows, where Chromium keeps the page's storage in memory
+// (a download there costs its own size in RAM until it is saved). The folder picker needs a
+// click, so it is not offered when the page starts by itself (a player's Save).
+const folderPossible = typeof window.showDirectoryPicker === 'function' && params.get('autostart') !== '1';
+let folder = null; // { dir, store } once a folder was chosen
+
+function setupFolderOption() {
+  if (!folderPossible) return;
+  const ext = globalThis.chrome && globalThis.chrome.extension;
+  $('folder-note').textContent = ext && ext.inIncognitoContext
+    ? 'Incognito windows keep downloads in memory until they are saved. With this, the parts go to disk as they arrive (a temporary folder next to the file, removed when it is done).'
+    : 'The parts wait in a temporary folder next to the file and are removed when it is done.';
+  $('folder-field').hidden = false;
+}
+
+// Called first in the Start click (the picker needs that click). Resolves null when the option is
+// off; throws when the user closes the picker.
+async function chooseFolder(fileName) {
+  if (!folderPossible || !$('to-folder').checked) return null;
+  let dir;
+  try {
+    dir = await window.showDirectoryPicker({ id: 'sap-download', mode: 'readwrite' });
+  } catch (e) {
+    throw new Error(e && e.name === 'AbortError' ? 'No folder chosen.' : `Could not use that folder (${(e && e.message) || e}).`);
+  }
+  const store = await FileStore.open(dir, `${fileName}.parts`);
+  folder = { dir, store };
+  state.storage = 'folder';
+  window.addEventListener('pagehide', () => { store.destroy(); });
+  return store;
+}
+
+// "name.mp4", or "name (2).mp4" … when the folder has one already
+async function freeName(dir, name) {
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '';
+  for (let n = 1; ; n++) {
+    const candidate = n === 1 ? name : `${stem} (${n})${ext}`;
+    try { await dir.getFileHandle(candidate); } catch { return candidate; }
+  }
+}
+
+// Streams the Blob (slices of the part files) into a new file: disk to disk, not through RAM.
+// onBytes(written) while copying; Chromium then checks the file when it is closed (seconds for a
+// large one), reported as onBytes(null).
+async function writeToFolder(dir, name, blob, onBytes = () => {}) {
+  const fileName = await freeName(dir, name);
+  const handle = await dir.getFileHandle(fileName, { create: true });
+  let written = 0;
+  const count = new TransformStream({
+    transform(chunk, c) { written += chunk.byteLength; onBytes(written); c.enqueue(chunk); },
+    flush() { onBytes(null); }
+  });
+  await blob.stream().pipeThrough(count).pipeTo(await handle.createWritable());
+  return fileName;
+}
+
+// Start click, before anything else: the folder store, or browser storage. null = stop (no folder).
+async function storeForStart() {
+  const name = $('name').value && $('name').value.trim() ? $('name').value.trim() : 'video.mp4';
+  try {
+    return (await chooseFolder(name)) || await getStore();
+  } catch (e) {
+    setStatus(e.message, 'error');
+    return null;
+  }
+}
+
+function downloadBlob(name, blob) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 function save(result, name) {
   const blob = result.blob;
   const href = URL.createObjectURL(blob);
@@ -173,7 +254,8 @@ async function loadChosenSubtitles({ signal, parallel }) {
 
 // "Show S01E02.mp4" + English → "Show S01E02.en.srt" (the label when there is no language)
 // zero: the media time that became 0 in the MP4 (for cues on the media timeline)
-function saveSrtFiles(tracks, videoName, zero = 0) {
+function saveSrtFiles(tracks, videoName, zero = 0, write = downloadBlob) {
+  const writes = [];
   const stem = videoName.replace(/\.[^.]+$/, '') || 'video';
   const used = new Set();
   for (const t of tracks) {
@@ -184,14 +266,10 @@ function saveSrtFiles(tracks, videoName, zero = 0) {
     const shift = t.base === 'media' ? zero : 0;
     const cues = shift ? t.cues.map(c => ({ start: c.start - shift, end: c.end - shift, text: c.text })).filter(c => c.end > 0) : t.cues;
     const blob = new Blob(['\ufeff' + cuesToSrt(cues)], { type: 'application/x-subrip' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${stem}.${tag}.srt`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    writes.push(write(`${stem}.${tag}.srt`, blob));
   }
   state.srtFiles = tracks.length;
+  return Promise.all(writes);
 }
 
 function pageSubtitles() {
@@ -208,6 +286,7 @@ async function main() {
   await cacheReady;
   if (!url) return fail(new Error('No video URL given.'));
   $('source').textContent = url;
+  setupFolderOption();
   const settings = await readSettings();
   const parallel = bufferingSettings(settings, { mobile }).parallel;
   let controller = null;
@@ -221,8 +300,11 @@ async function main() {
     state.state = 'ready';
     $('start').disabled = false;
     $('start').onclick = async () => {
+      const store = await storeForStart();
+      if (!store) return;
       controller = new AbortController();
       $('start').disabled = true;
+      $('to-folder').disabled = true;
       $('cancel').hidden = false;
       $('progress').hidden = false;
       state.state = 'downloading';
@@ -230,7 +312,7 @@ async function main() {
       try {
         const subs = await loadChosenSubtitles({ signal: controller.signal, parallel });
         const result = await downloadFile(url, {
-          store: await getStore(),
+          store,
           signal: controller.signal,
           onProgress: p => {
             $('progress').max = p.total || 1;
@@ -238,8 +320,9 @@ async function main() {
             setStatus(`${mb(p.bytes)} downloaded`);
           }
         });
-        finish(result, $('name').value, result.type, subs, true);
+        await finish(result, $('name').value, result.type, subs, true);
       } catch (e) {
+        if (folder) folder.store.destroy();
         fail(e);
       }
     };
@@ -349,8 +432,11 @@ async function main() {
   $('start').disabled = false;
   if (params.get('autostart') === '1') setTimeout(() => $('start').click(), 0);
   $('start').onclick = async () => {
+    const store = await storeForStart();
+    if (!store) return;
     controller = new AbortController();
     $('start').disabled = true;
+    $('to-folder').disabled = true;
     quality.disabled = true;
     audioSel.disabled = true;
     lockSubtitleChoices();
@@ -365,7 +451,7 @@ async function main() {
       }
       const result = await downloadManifest({
         text,
-        store: await getStore(),
+        store,
         shaka, manifest, parallel, signal: controller.signal, fetchFn: cachedFetch, cachedBlob,
         keep: partial && cacheStore ? (u, r) => cachedKeys.has(segmentKey(u, r.start, r.end)) : null,
         choice: {
@@ -375,14 +461,19 @@ async function main() {
         onProgress: p => {
           $('progress').max = p.total;
           $('progress').value = p.done;
+          if (p.phase) {
+            setStatus(`${p.phase === 'convert' ? 'Converting' : 'Putting the MP4 together:'} segment ${p.done} of ${p.total}…`);
+            return;
+          }
           const speed = p.seconds > 0 ? ` · ${mb(p.bytes / p.seconds)}/s` : '';
           setStatus(`Segment ${p.done} of ${p.total} · ${mb(p.bytes)}${speed}`);
         }
       });
       player.destroy().catch(() => {});
       setStatus('Putting the MP4 together…');
-      finish(result, $('name').value, 'video/mp4', text, $('subs-files').checked);
+      await finish(result, $('name').value, 'video/mp4', text, $('subs-files').checked);
     } catch (e) {
+      if (folder) folder.store.destroy();
       fail(e.message === 'Cancelled' || (controller && controller.signal.aborted) ? new Error('Cancelled.') : e);
       if (controller && controller.signal.aborted) state.state = 'cancelled';
     }
@@ -390,10 +481,25 @@ async function main() {
   $('cancel').onclick = () => controller && controller.abort();
 }
 
-function finish(result, name, type, subtitles = [], srtFiles = false) {
-  const fileName = name && name.trim() ? name.trim() : 'video.mp4';
-  save(result, fileName, type);
-  if (srtFiles && subtitles.length) saveSrtFiles(subtitles, fileName, result.zero || 0);
+async function finish(result, name, type, subtitles = [], srtFiles = false) {
+  let fileName = name && name.trim() ? name.trim() : 'video.mp4';
+  if (folder) {
+    setStatus('Writing the file to the folder…');
+    $('progress').max = result.blob.size || 1;
+    let shown = 0;
+    fileName = await writeToFolder(folder.dir, fileName, result.blob, n => {
+      if (n === null) { setStatus('Finishing the file (the browser checks it before it appears)…'); return; }
+      $('progress').value = n;
+      if (n - shown < 4 * 1024 * 1024 && n < result.blob.size) return;
+      shown = n;
+      setStatus(`Writing the file to the folder: ${mb(n)} of ${mb(result.blob.size)}…`);
+    });
+    if (srtFiles && subtitles.length) await saveSrtFiles(subtitles, fileName, result.zero || 0, (n, b) => writeToFolder(folder.dir, n, b));
+    await folder.store.destroy(); // the parts; the file is complete on disk
+  } else {
+    save(result, fileName, type);
+    if (srtFiles && subtitles.length) saveSrtFiles(subtitles, fileName, result.zero || 0);
+  }
   Object.assign(state, { state: 'done', size: result.size, duration: result.duration || 0, tracks: result.tracks || [], name: fileName, peakHeld: result.peakHeld, storage: result.storage, stored: result.stored });
   $('cancel').hidden = true;
   $('progress').value = $('progress').max;
@@ -403,9 +509,10 @@ function finish(result, name, type, subtitles = [], srtFiles = false) {
     srtFiles && subtitles.length ? `${subtitles.length} .srt file${subtitles.length > 1 ? 's' : ''}` : '',
     state.subtitleErrors.length ? `skipped ${state.subtitleErrors.join('; ')}` : ''
   ].filter(Boolean).join(' · ');
-  setStatus(`Saved ${fileName} to your downloads (${mb(result.size)}${result.duration ? `, ${clock(result.duration)}` : ''}).${subNote ? ` Subtitles: ${subNote}.` : ''}`, 'done');
+  setStatus(`Saved ${fileName} to ${folder ? 'the folder you chose' : 'your downloads'} (${mb(result.size)}${result.duration ? `, ${clock(result.duration)}` : ''}).${subNote ? ` Subtitles: ${subNote}.` : ''}`, 'done');
   $('warning').hidden = true;
-  armSaveAgain(() => { save(result, fileName, type); state.saves++; }, result.size);
+  // a folder save is complete on disk and its parts are gone: nothing to save again from
+  if (!folder) armSaveAgain(() => { save(result, fileName, type); state.saves++; }, result.size);
   state.saves = 1;
 }
 

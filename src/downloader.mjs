@@ -289,7 +289,11 @@ export async function downloadManifest({ shaka, manifest, choice, parallel = 4, 
     if (job.kind === 'fmp4' || job.kind === 'unknown') {
       if (!job.init) throw new Error(job.kind === 'unknown' ? 'Unsupported segment format' : 'fMP4 stream without an initialization segment');
       const fragments = [];
-      for (let i = 0; i < job.refs.length; i++) fragments.push(...await fragmentsOf(await segmentBlob(job, i), held));
+      for (let i = 0; i < job.refs.length; i++) {
+        if (signal && signal.aborted) throw new Error('Cancelled');
+        fragments.push(...await fragmentsOf(await segmentBlob(job, i), held));
+        onProgress({ phase: 'assemble', done: i + 1, total: job.refs.length });
+      }
       sources[job.index] = { init: job.init, fragments };
       continue; // a muxed-audio sibling has nothing to add: the fMP4 init already has both tracks
     }
@@ -311,10 +315,20 @@ export async function downloadManifest({ shaka, manifest, choice, parallel = 4, 
         held.add(data.length);
         const key = `frag/${o.job.index}/${i}`;
         await store.put(key, data);
+        // boundaries from the bytes in hand; the stored copy is sliced in step 3 (reading it back
+        // here would make a folder store close a file per segment, see segment-store.mjs)
+        o.fragments.push(...splitSegment(data).map(f => ({
+          moof: f.moof,
+          key,
+          restStart: f.restStart,
+          restEnd: f.restEnd,
+          restSize: f.restEnd - f.restStart,
+          moofOffset: f.moofOffset
+        })));
         held.sub(data.length);
-        o.fragments.push(...await fragmentsOf(await store.get(key), held));
       }
       held.sub(raw.length);
+      onProgress({ phase: 'convert', done: i + 1, total: job.refs.length });
       if (job.blobs[i]) job.blobs[i] = null; // the cache's copy stays where it is
       else await store.delete(rawKey(job, i));
     }
@@ -329,6 +343,14 @@ export async function downloadManifest({ shaka, manifest, choice, parallel = 4, 
   }
 
   // 3. One MP4: the small rewritten headers + slices of the stored media data
+  const storedBlobs = new Map();
+  for (const source of sources) {
+    for (const f of source ? source.fragments : []) {
+      if (!f.key) continue;
+      if (!storedBlobs.has(f.key)) storedBlobs.set(f.key, await store.get(f.key));
+      f.rest = storedBlobs.get(f.key).slice(f.restStart, f.restEnd);
+    }
+  }
   const plan = planMp4(sources.filter(Boolean), { text });
   const blob = new Blob([...plan.header, ...plan.body.flatMap(f => [f.moof, f.rest])], { type: 'video/mp4' });
   if (blob.size !== plan.size) throw new Error(`Assembled ${blob.size} bytes, expected ${plan.size}`);

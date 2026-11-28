@@ -28,17 +28,19 @@ async function until(fn, { timeout = 15000, interval = 250 } = {}) {
   return last;
 }
 
-// Evaluates `expression` (may be a promise) in the incognito instance's service worker
+// Evaluates `expression` (may be a promise) in an attached incognito target
 let msgId = 0;
 const pending = new Map();
-function incognito(expression) {
+function evaluateIn(sessionId, expression) {
   const id = ++msgId;
   const message = JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, awaitPromise: true, returnByValue: true } });
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    cdp.send('Target.sendMessageToTarget', { sessionId: incognitoSession, message }).catch(reject);
+    cdp.send('Target.sendMessageToTarget', { sessionId, message }).catch(reject);
   });
 }
+// ... in the incognito instance's service worker
+const incognito = expression => evaluateIn(incognitoSession, expression);
 
 before(async () => {
   site = await startServer();
@@ -158,6 +160,8 @@ test('incognito: the page Referer reaches the CDN from the incognito download pa
   const r = await openInIncognito('openDownloadPage', { url: `${ORIGIN}/secure/index.m3u8`, referer: `${ORIGIN}/p/secure` });
   assert.equal(r.incognito, true);
   assert.equal(r.title, 'Download');
+  // the page fetches the manifest after it has loaded
+  await until(() => site.log.secureReferers.length > 0, { timeout: 10000 }).catch(() => {});
   assert.ok(site.log.secureReferers.includes(`${ORIGIN}/p/secure`), `referers seen: ${JSON.stringify(site.log.secureReferers)}`);
 });
 
@@ -175,4 +179,39 @@ test('normal window: the download page still opens there', async () => {
     return { incognito: win.incognito, title: tab.title };
   }, HLS);
   assert.deepEqual(r, { incognito: false, title: 'Download' });
+});
+
+test('incognito: "save straight to a folder" is offered (with the memory note) and writes the MP4 there', async () => {
+  // a download page in the incognito window, attached over CDP like the worker
+  await incognito(`openDownloadPage(${JSON.stringify({ url: HLS, subtitles: [], title: 'Private Clip' })})`);
+  const target = await until(async () => {
+    const { targetInfos } = await cdp.send('Target.getTargets');
+    const normalCtx = targetInfos.find(t => t.type === 'page' && t.url.includes('/p/secure')).browserContextId;
+    return targetInfos.find(t => t.type === 'page' && t.url.includes('download.html') && t.url.includes('Private') && t.browserContextId !== normalCtx);
+  });
+  assert.ok(target, 'incognito download page not found');
+  const { sessionId } = await cdp.send('Target.attachToTarget', { targetId: target.targetId, flatten: false });
+  const inPage = expression => evaluateIn(sessionId, expression);
+  assert.ok(await until(() => inPage(`window._download && window._download.state === 'ready'`)), 'download page not ready');
+  const offer = await inPage(`({ shown: !document.getElementById('folder-field').hidden, note: document.getElementById('folder-note').textContent })`);
+  assert.equal(offer.shown, true);
+  assert.match(offer.note, /Incognito windows keep downloads in memory/);
+  // the picker replaced by a folder of the page's own file system (same handle API)
+  await inPage(`(async () => {
+    const root = await navigator.storage.getDirectory();
+    window.showDirectoryPicker = async () => root.getDirectoryHandle('picked', { create: true });
+    document.getElementById('to-folder').checked = true;
+    document.getElementById('start').click();
+  })()`);
+  const done = await until(() => inPage(`['done', 'error'].includes(window._download.state) && JSON.stringify(window._download)`), { timeout: 30000 });
+  assert.equal(JSON.parse(done).state, 'done', done);
+  const names = await inPage(`(async () => {
+    const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle('picked');
+    const out = [];
+    for await (const [name, h] of dir.entries()) out.push(name + ':' + (h.kind === 'file' ? (await h.getFile()).size : 'dir'));
+    return out;
+  })()`);
+  assert.equal(names.length, 1, JSON.stringify(names));
+  assert.match(names[0], /^Private Clip\.mp4:\d+$/);
+  assert.ok(Number(names[0].split(':')[1]) > 100000, JSON.stringify(names));
 });

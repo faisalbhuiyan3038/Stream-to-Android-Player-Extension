@@ -982,6 +982,59 @@ test('download: a plain file is saved as it is', async () => {
   assert.ok(data.equals(fs.readFileSync(path.join(__dirname, 'fixtures', 'clip.webm'))));
 });
 
+// "Save straight to a folder": the folder picker is replaced by a folder of the page's own
+// (origin-private) file system, which has the same FileSystemDirectoryHandle API
+async function downloadToFolder(mediaUrl, title) {
+  const page = await ctx.newPage();
+  await page.goto(`chrome-extension://${extId}/download.html?url=${encodeURIComponent(mediaUrl)}&title=${encodeURIComponent(title)}`);
+  const ready = await until(() => page.evaluate(() => window._download && ['ready', 'error'].includes(window._download.state) && window._download), { timeout: 20000 });
+  assert.equal(ready && ready.state, 'ready', `not ready: ${JSON.stringify(ready)}`);
+  assert.equal(await page.isVisible('#folder-field'), true, 'folder option not offered');
+  await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    await root.removeEntry('picked', { recursive: true }).catch(() => {});
+    window.showDirectoryPicker = async () => root.getDirectoryHandle('picked', { create: true });
+  });
+  await page.check('#to-folder');
+  await page.click('#start');
+  const done = await until(() => page.evaluate(() => ['done', 'error'].includes(window._download.state) && window._download), { timeout: 30000 });
+  const out = await page.evaluate(async () => {
+    const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle('picked');
+    const names = [];
+    for await (const [name] of dir.entries()) names.push(name);
+    const files = {};
+    for (const name of names.filter(n => !n.endsWith('.parts'))) {
+      const bytes = new Uint8Array(await (await (await dir.getFileHandle(name)).getFile()).arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < bytes.length; i += 32768) bin += String.fromCharCode(...bytes.subarray(i, i + 32768));
+      files[name] = btoa(bin);
+    }
+    return { names, files, status: document.getElementById('status').textContent, again: !document.getElementById('again').hidden };
+  });
+  await page.close();
+  return { state: done, ...out };
+}
+
+test('download: "save straight to a folder" writes the same MP4 there (no browser download) and removes its parts', async () => {
+  const normal = await downloadVia(`${ORIGIN}/hls-real/index.m3u8`, 'Folder Clip');
+  const r = await downloadToFolder(`${ORIGIN}/hls-real/index.m3u8`, 'Folder Clip');
+  assert.equal(r.state.state, 'done', JSON.stringify(r.state));
+  assert.equal(r.state.storage, 'folder');
+  assert.deepEqual(r.names, ['Folder Clip.mp4'], 'parts folder left behind or file missing');
+  const data = Buffer.from(r.files['Folder Clip.mp4'], 'base64');
+  assert.deepEqual(boxTypes(data).slice(0, 3), ['ftyp', 'moov', 'sidx']);
+  assert.ok(data.equals(normal.data), `folder file differs from the normal download (${data.length} vs ${normal.data.length} bytes)`);
+  assert.match(r.status, /folder you chose/);
+  assert.equal(r.again, false, '"Save again" offered for a folder save');
+});
+
+test('download: "save straight to a folder" for a plain file', async () => {
+  const r = await downloadToFolder(`${ORIGIN}/media/real.webm`, 'Folder Plain');
+  assert.equal(r.state.state, 'done', JSON.stringify(r.state));
+  assert.deepEqual(r.names, ['Folder Plain.webm']);
+  assert.ok(Buffer.from(r.files['Folder Plain.webm'], 'base64').equals(fs.readFileSync(path.join(__dirname, 'fixtures', 'clip.webm'))));
+});
+
 test('⬇️ in the page menu opens the downloader with the stream and its cleaned title', async () => {
   await setSettings({ showDownloadIcon: true, downloadMethod: 'browser' });
   const page = await openSite('/p/real-hls');

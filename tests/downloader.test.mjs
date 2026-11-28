@@ -157,4 +157,37 @@ test('Shaka reference helpers work with minified field names', () => {
     assert.equal(out.stored, 2, 'the decrypted segment and the cache miss');
     assert.deepEqual(await bytesOfBlob(out.blob), await bytesOfBlob(reference.blob));
   });
+  // MPEG-TS: each converted segment is stored and its fragments are sliced from the stored copy
+  // only at the end, so a folder store is not made to close a file per segment (segment-store.mjs)
+  test('downloadManifest: converted TS segments are not read back one by one; same MP4', async () => {
+    const reference = await downloadManifest({ shaka: {}, manifest: manifestOf(), choice: { videoId: 1 }, fetchFn: counted(u => files.get(u)).fetchFn });
+    const tsOf = u => Uint8Array.from([0x47, segNames.indexOf(u), 0, 0, 0, 0]);
+    class TsTransmuxer {
+      async transmux(raw) { return { data: files.get(segNames[raw[1]]), init: files.get('init.mp4') }; }
+      destroy() {}
+    }
+    const manifest = manifestOf();
+    manifest.variants[0].video.segmentIndex.forEach(r => { r.initSegmentReference = null; });
+    const inner = new MemoryStore();
+    const log = [];
+    const store = {
+      kind: 'test',
+      put: (k, v) => { log.push(`put ${k}`); return inner.put(k, v); },
+      get: k => { log.push(`get ${k}`); return inner.get(k); },
+      delete: k => { log.push(`delete ${k}`); return inner.delete(k); },
+      keys: () => inner.keys()
+    };
+    const phases = [];
+    const out = await downloadManifest({
+      shaka: { transmuxer: { TsTransmuxer } }, manifest, choice: { videoId: 1 }, store,
+      fetchFn: counted(u => (u === 'init.mp4' ? files.get(u) : tsOf(u))).fetchFn,
+      onProgress: p => { if (p.phase) phases.push(`${p.phase} ${p.done}/${p.total}`); }
+    });
+    const lastPut = log.findLastIndex(l => l.startsWith('put frag/'));
+    const firstFragGet = log.findIndex(l => l.startsWith('get frag/'));
+    assert.ok(firstFragGet > lastPut, 'a converted segment was read back before all were converted');
+    assert.equal(log.filter(l => l.startsWith('get frag/')).length, segNames.length, 'one read per stored segment');
+    assert.deepEqual(phases.at(-1), `convert ${segNames.length}/${segNames.length}`);
+    assert.deepEqual(await bytesOfBlob(out.blob), await bytesOfBlob(reference.blob));
+  });
 }
