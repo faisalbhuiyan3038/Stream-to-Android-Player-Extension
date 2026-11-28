@@ -1,7 +1,7 @@
 // Unit tests for src/page-params.mjs (what a web-player page reads from its own URL).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getVideoUrl, getSubtitleList } from '../src/page-params.mjs';
+import { getVideoUrl, getSubtitleList, getPreferredHeight } from '../src/page-params.mjs';
 
 const loc = href => { const u = new URL(href); return { search: u.search, hash: u.hash }; };
 
@@ -24,4 +24,11 @@ test('getSubtitleList: valid entries only, malformed JSON ignored', () => {
   assert.deepEqual(getSubtitleList({ search: '?subs=%7Bbroken' }), []);
   assert.deepEqual(getSubtitleList({ search: '?subs=' + encodeURIComponent('{"url":"x"}') }), []);
   assert.deepEqual(getSubtitleList({ search: '' }), []);
+});
+
+test('getPreferredHeight: ?vh= picked in the stream list, nonsense ignored', () => {
+  assert.equal(getPreferredHeight({ search: '?url=x&vh=720' }), 720);
+  assert.equal(getPreferredHeight({ search: '?vh=abc' }), 0);
+  assert.equal(getPreferredHeight({ search: '?vh=-1' }), 0);
+  assert.equal(getPreferredHeight({ search: '' }), 0);
 });

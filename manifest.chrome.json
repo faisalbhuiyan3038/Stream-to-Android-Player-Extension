@@ -4,6 +4,7 @@
   "version": "1.9",
   "description": "Detect streaming videos and open them in an external video player",
   "author": "Faisal Bhuiyan",
+  "incognito": "split",
   "action": {
     "default_icon": {
       "16": "icons/icon16.png",

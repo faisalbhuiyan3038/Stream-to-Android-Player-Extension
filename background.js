@@ -10,19 +10,31 @@ if (typeof importScripts === 'function') {
 
 const NATIVE_HOST = 'stream_player_host';
 
+// Chromium runs the extension in "split" incognito mode (manifest.chrome.json): incognito windows
+// get a second instance of this background, which can open our pages in incognito tabs (in the
+// default "spanning" mode Chromium blocks them there). storage.local is shared by both instances,
+// so each keeps its tab state under its own keys; the incognito instance keeps it in memory only
+// (storage.session), so nothing found in incognito is written to disk. Settings stay shared.
+// Firefox has no split mode: one instance, inIncognitoContext false.
+const INCOGNITO = !!browser.extension && browser.extension.inIncognitoContext === true;
+const stateStore = INCOGNITO && browser.storage.session ? browser.storage.session : browser.storage.local;
+const STATE_KEY = INCOGNITO
+  ? { streams: 'detectedStreams:incognito', subtitles: 'detectedSubtitles:incognito', captured: 'audioCapturedTabs:incognito' }
+  : { streams: 'detectedStreams', subtitles: 'detectedSubtitles', captured: 'audioCapturedTabs' };
+
 let detectedStreams = new Map();   // tabId -> [stream]
 let detectedSubtitles = new Map(); // tabId -> [{ url, label, lang }]
-let storageReady = browser.storage.local.get(['detectedStreams', 'detectedSubtitles']).then(result => {
-  if (result.detectedStreams) {
-    detectedStreams = new Map(result.detectedStreams);
+let storageReady = stateStore.get([STATE_KEY.streams, STATE_KEY.subtitles]).then(result => {
+  if (result[STATE_KEY.streams]) {
+    detectedStreams = new Map(result[STATE_KEY.streams]);
   }
-  if (result.detectedSubtitles) {
-    detectedSubtitles = new Map(result.detectedSubtitles);
+  if (result[STATE_KEY.subtitles]) {
+    detectedSubtitles = new Map(result[STATE_KEY.subtitles]);
   }
 });
 
 browser.runtime.onStartup.addListener(() => {
-  browser.storage.local.remove(['detectedStreams', 'detectedSubtitles']);
+  stateStore.remove([STATE_KEY.streams, STATE_KEY.subtitles]);
   detectedStreams.clear();
   detectedSubtitles.clear();
   removeLeftoverDatabases().catch(() => {});
@@ -63,9 +75,9 @@ async function removeLeftoverDatabases() {
 }
 
 function saveStreams() {
-  browser.storage.local.set({
-    detectedStreams: Array.from(detectedStreams.entries()),
-    detectedSubtitles: Array.from(detectedSubtitles.entries())
+  stateStore.set({
+    [STATE_KEY.streams]: Array.from(detectedStreams.entries()),
+    [STATE_KEY.subtitles]: Array.from(detectedSubtitles.entries())
   }).catch(() => {});
 }
 
@@ -441,6 +453,11 @@ function isSegmentOf(segUrl, stream) {
   }
 }
 
+// True when `url` is one of the variant or rendition playlists of the master playlist `stream`.
+function isChildOf(url, stream) {
+  return !!(stream.children && stream.children.includes(url));
+}
+
 // ─── Playlist analysis (duration, real quality, variants) ─────────────────────
 
 // The background's own request for a playlist must look like the page's: many CDNs refuse a
@@ -512,10 +529,23 @@ function resolveUrl(ref, base) {
 
 function parseM3u8(text, baseUrl) {
   const lines = text.split(/\r?\n/);
-  const result = { isMaster: false, variants: [], duration: 0, segmentDir: null };
+  const result = { isMaster: false, variants: [], renditions: [], duration: 0, segmentDir: null };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
-    if (line.startsWith('#EXT-X-STREAM-INF:')) {
+    if (line.startsWith('#EXT-X-MEDIA:')) {
+      // Alternate renditions (separate audio, subtitles): only those with their own playlist
+      const attrs = parseAttributes(line.slice('#EXT-X-MEDIA:'.length));
+      if (attrs.URI) {
+        result.isMaster = true;
+        result.renditions.push({
+          type: (attrs.TYPE || '').toUpperCase(),
+          groupId: attrs['GROUP-ID'] || '',
+          url: resolveUrl(attrs.URI, baseUrl),
+          language: attrs.LANGUAGE || '',
+          name: attrs.NAME || ''
+        });
+      }
+    } else if (line.startsWith('#EXT-X-STREAM-INF:')) {
       result.isMaster = true;
       const attrs = parseAttributes(line.slice('#EXT-X-STREAM-INF:'.length));
       let j = i + 1;
@@ -526,7 +556,8 @@ function parseM3u8(text, baseUrl) {
           url: resolveUrl(lines[j].trim(), baseUrl),
           bandwidth: parseInt(attrs.BANDWIDTH, 10) || 0,
           height: res ? parseInt(res[2], 10) : 0,
-          codecs: attrs.CODECS || ''
+          codecs: attrs.CODECS || '',
+          audioGroup: attrs.AUDIO || ''
         });
       }
     } else if (line.startsWith('#EXTINF:')) {
@@ -606,6 +637,11 @@ async function analyzeStream(tabId, url, type, headers = null) {
     if (!text) return false;
     const parsed = parseM3u8(text, url);
     if (parsed.isMaster) {
+      // Groups with an audio playlist of their own: such a variant playlist has no sound, only
+      // the master joins it to its audio (so it must not be played or listed on its own)
+      const audioGroups = new Set(parsed.renditions.filter(r => r.type === 'AUDIO').map(r => r.groupId));
+      info.children = [...new Set([...parsed.variants, ...parsed.renditions].map(x => x.url))];
+      info.separateAudio = parsed.variants.some(v => audioGroups.has(v.audioGroup));
       const byHeight = new Map();
       for (const v of parsed.variants) {
         const key = v.height || `bw${v.bandwidth}`;
@@ -618,7 +654,8 @@ async function analyzeStream(tabId, url, type, headers = null) {
           url: v.url,
           bandwidth: v.bandwidth,
           height: v.height,
-          label: heightLabel(v.height) || `${Math.round(v.bandwidth / 1000)}k`
+          label: heightLabel(v.height) || `${Math.round(v.bandwidth / 1000)}k`,
+          ...(audioGroups.has(v.audioGroup) ? { separateAudio: true } : {})
         }));
       info.quality = heightLabel(Math.max(0, ...parsed.variants.map(v => v.height)));
       // Duration from a media playlist: the first variant, else the next ones (one may be refused)
@@ -652,6 +689,13 @@ async function analyzeStream(tabId, url, type, headers = null) {
     if (info.duration > 0 && isFinite(info.duration)) stream.duration = info.duration;
     if (info.quality) stream.quality = info.quality;
     if (info.variants && info.variants.length > 0) stream.variants = info.variants;
+    if (info.children && info.children.length > 0) {
+      stream.children = info.children;
+      stream.separateAudio = info.separateAudio;
+      // The page usually requested its variant/audio playlists before this analysis finished
+      streams = streams.filter(s => !(s.type === 'm3u8' && isChildOf(s.url, stream)));
+      detectedStreams.set(tabId, streams);
+    }
     if (info.segmentDir) {
       stream.segmentDir = info.segmentDir;
       streams = streams.filter(s => !(s.type === 'ts' && isSegmentOf(s.url, stream)));
@@ -857,6 +901,8 @@ async function addStreamLocked(tabId, url, contentType, duration, reqHeaders, ty
 
   // Hide media segments that belong to a playlist we already know about
   if (streamType === 'ts' && streams.some(s => s.type === 'm3u8' && isSegmentOf(url, s))) return;
+  // ... and variant/audio playlists of a known master (a variant alone may have no sound)
+  if (streamType === 'm3u8' && streams.some(s => s.type === 'm3u8' && isChildOf(url, s))) return;
 
   const quality = extractQuality(url, '');
   const rawName = url.split('/').pop().split('?')[0];
@@ -1036,9 +1082,13 @@ async function buildContext(tabId, url, streamUrl) {
   } catch { /* tab gone */ }
   const h = (stream && stream.headers) || {};
   const referer = h.referer || (pageUrl.startsWith('http') ? pageUrl : '');
+  // A quality picked on a master with separate audio → the master + that quality (shared.js)
+  const target = StreamShared.resolveActionUrl(url, stream);
   return {
     tabId,
-    url,
+    url: target.url,
+    height: target.height,       // chosen quality when `url` became the master (else 0)
+    bandwidth: target.bandwidth,
     stream,
     title: (stream && (stream.title || stream.pageTitle || stream.displayName)) || '',
     referer,
@@ -1146,9 +1196,9 @@ async function cycleAudioPreset(tab) {
 const capturedTabs = new Set();
 const sessionStore = browser.storage.session;
 const captureReady = sessionStore
-  ? sessionStore.get('audioCapturedTabs').then(r => { for (const id of r.audioCapturedTabs || []) capturedTabs.add(id); }, () => {})
+  ? sessionStore.get(STATE_KEY.captured).then(r => { for (const id of r[STATE_KEY.captured] || []) capturedTabs.add(id); }, () => {})
   : Promise.resolve();
-const saveCaptured = () => { if (sessionStore) sessionStore.set({ audioCapturedTabs: [...capturedTabs] }).catch(() => {}); };
+const saveCaptured = () => { if (sessionStore) sessionStore.set({ [STATE_KEY.captured]: [...capturedTabs] }).catch(() => {}); };
 const hasOffscreen = () => (browser.offscreen ? browser.offscreen.hasDocument().catch(() => false) : Promise.resolve(false));
 let offscreenCreating = null;
 async function ensureOffscreen() {
@@ -1227,6 +1277,7 @@ async function openWebPlayer(ctx) {
 
   const params = new URLSearchParams({ url: ctx.url });
   if (ctx.title) params.set('title', ctx.title);
+  if (ctx.height) params.set('vh', String(ctx.height)); // quality picked in the stream list
   if (ctx.subtitles.length > 0) {
     params.set('subs', subsParam(ctx.subtitles));
   }
@@ -1256,6 +1307,8 @@ async function openExtensionTab(page, params, ctx) {
 async function openDownloadPage(ctx) {
   const params = new URLSearchParams({ url: ctx.url });
   if (ctx.title) params.set('title', ctx.title);
+  if (ctx.height) params.set('vh', String(ctx.height));
+  if (ctx.bandwidth) params.set('vbw', String(ctx.bandwidth));
   // The page's subtitles go into the MP4 as text tracks (or next to a plain file as .srt)
   if (ctx.subtitles.length > 0) params.set('subs', subsParam(ctx.subtitles));
   await openExtensionTab('download.html', params, ctx);
@@ -1291,7 +1344,9 @@ async function saveFromPlayer(playerTabId, m) {
 // Argument presets for known players. A token is dropped when one of its
 // placeholders is empty; a token containing {sub} is repeated per subtitle.
 const NATIVE_PRESETS = {
-  mpv: ['--referrer={referer}', '--user-agent={ua}', '--http-header-fields=Cookie: {cookie}', '--force-media-title={title}', '--sub-file={sub}', '{url}'],
+  // -append adds one header (the plain list option splits on commas, which cookies contain);
+  // Origin as well as Referer: CDNs that the built-in player reaches with both refuse mpv otherwise
+  mpv: ['--referrer={referer}', '--user-agent={ua}', '--http-header-fields-append=Origin: {origin}', '--http-header-fields-append=Cookie: {cookie}', '--hls-bitrate={bitrate}', '--force-media-title={title}', '--sub-file={sub}', '{url}'],
   vlc: ['--http-referrer={referer}', '--http-user-agent={ua}', '--meta-title={title}', '--sub-file={sub}', '{url}']
 };
 
@@ -1327,7 +1382,10 @@ function buildNativeCommand(ctx) {
   } else {
     tokens = ['{url}'];
   }
-  const vars = { url: ctx.url, referer: ctx.referer, ua: ctx.ua, title: ctx.title, cookie: ctx.cookie, origin: ctx.origin };
+  const vars = {
+    url: ctx.url, referer: ctx.referer, ua: ctx.ua, title: ctx.title, cookie: ctx.cookie, origin: ctx.origin,
+    bitrate: ctx.bandwidth ? String(ctx.bandwidth) : '' // the quality picked in the list (master URL)
+  };
   return [exe, ...fillTemplate(tokens, vars, ctx.subtitles.map(s => s.url))];
 }
 

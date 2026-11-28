@@ -450,6 +450,8 @@ async function renderStreamList(tabId, settings, platform) {
     const actions = document.createElement('div');
     actions.className = 'stream-row-actions';
     const effective = () => chosen.get(stream.url) || stream.url;
+    // Copy/share: the master when the picked quality has no sound of its own (separate audio)
+    const shareable = () => StreamShared.resolveActionUrl(effective(), stream).url;
     const addButton = (label, title, handler) => {
       const btn = document.createElement('button');
       btn.className = 'row-btn';
@@ -471,13 +473,13 @@ async function renderStreamList(tabId, settings, platform) {
 
     if (isAndroid) {
       addButton('📤', 'Share / open in player', async () => {
-        StreamShared.shareToAndroid(window, effective(), stream.title || stream.displayName || stream.name, settings.androidPlayer, subtitles[0] && subtitles[0].url);
+        StreamShared.shareToAndroid(window, shareable(),stream.title || stream.displayName || stream.name, settings.androidPlayer, subtitles[0] && subtitles[0].url);
         return true;
       });
     } else {
       addButton('🖥️', 'Open in External Player', viaBackground('openExternalPlayer'));
     }
-    addButton('📋', 'Copy URL', async () => { await navigator.clipboard.writeText(effective()); return true; });
+    addButton('📋', 'Copy URL', async () => { await navigator.clipboard.writeText(shareable()); return true; });
     addButton('▶️', 'Play in Browser', viaBackground('openWebPlayer'));
     if (settings.showDownloadIcon) {
       addButton('⬇️', 'Download as MP4', viaBackground('downloadStream'));

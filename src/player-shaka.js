@@ -3,7 +3,7 @@
 import shaka from 'shaka-player/dist/shaka-player.ui.js';
 import 'shaka-player/dist/controls.css';
 import { loadSubtitleAsVtt } from './subtitles.mjs';
-import { getVideoUrl, getSubtitleList, getTitle } from './page-params.mjs';
+import { getVideoUrl, getSubtitleList, getTitle, getPreferredHeight } from './page-params.mjs';
 import { attachPlaybackMemory, createMemory, closestHeight, makeToast } from './player-memory.mjs';
 import { bufferingSettings } from './prefetch.mjs';
 import { openPlayerCache } from './stream-cache.mjs';
@@ -27,6 +27,8 @@ async function readSettings() {
 const isMobile = () => /Android|Mobile/i.test(navigator.userAgent) || matchMedia('(pointer: coarse)').matches;
 
 const videoUrl = getVideoUrl(window.location);
+// Quality picked in the stream list (master opened because that variant has separate audio)
+const pageHeight = getPreferredHeight(window.location);
 const errorEl = document.getElementById('error-message');
 const video = document.getElementById('video');
 const container = document.getElementById('player-container');
@@ -101,7 +103,7 @@ function syncNativeTracks(player) {
 // same): the remembered one, else the one closest to the screen's height.
 let autoPickUntil = 0;
 function applyPreferredQuality(player, { wholeVideo = false } = {}) {
-  const preferred = memory.preferredHeight();
+  const preferred = pageHeight || memory.preferredHeight();
   const variants = player.getVariantTracks().filter(v => v.height);
   if (wholeVideo) {
     const pick = pickVariant(variants, desiredHeight(preferred));
@@ -116,6 +118,7 @@ function applyPreferredQuality(player, { wholeVideo = false } = {}) {
   if (!height) return;
   const pick = variants.filter(v => v.height === height).sort((a, b) => b.bandwidth - a.bandwidth)[0];
   player.configure({ abr: { enabled: false } });
+  autoPickUntil = Date.now() + 1500; // already remembered, or picked in the stream list (?vh=)
   player.selectVariantTrack(pick, true);
 }
 function watchQualityChoice(player) {

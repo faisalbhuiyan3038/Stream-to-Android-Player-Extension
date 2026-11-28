@@ -21,6 +21,13 @@ export function getTitle(loc) {
   return (new URLSearchParams(loc.search || '').get('title') || '').trim().slice(0, 200);
 }
 
+// Quality picked in the stream list (?vh=720): the extension opens the master playlist when the
+// picked variant has its sound in a separate audio playlist, and the player starts at this height.
+export function getPreferredHeight(loc) {
+  const vh = parseInt(new URLSearchParams(loc.search || '').get('vh') || '', 10);
+  return vh > 0 && vh < 10000 ? vh : 0;
+}
+
 export function getSubtitleList(loc) {
   try {
     const list = JSON.parse(new URLSearchParams(loc.search || '').get('subs') || '[]');

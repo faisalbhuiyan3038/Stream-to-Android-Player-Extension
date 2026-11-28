@@ -306,7 +306,8 @@ function updateMenu() {
     };
 
     const handleAction = (action, el) => {
-      const url = effectiveUrl(stream);
+      // Copy/share hand out the master when the picked quality has no sound of its own
+      const url = StreamShared.resolveActionUrl(effectiveUrl(stream), stream).url;
       if (action === 'copy') {
         navigator.clipboard.writeText(url).catch(() => {});
       } else if (action === 'browser') {

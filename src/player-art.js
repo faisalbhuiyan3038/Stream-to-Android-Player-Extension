@@ -8,7 +8,7 @@ import Artplayer from 'artplayer';
 import Hls from 'hls.js';
 import shaka from 'shaka-player/dist/shaka-player.compiled.js';
 import { loadSubtitleAsVtt, sanitizeVttForHtml } from './subtitles.mjs';
-import { getVideoUrl, getSubtitleList, getTitle } from './page-params.mjs';
+import { getVideoUrl, getSubtitleList, getTitle, getPreferredHeight } from './page-params.mjs';
 import { attachPlaybackMemory, lockOrientationOnFullscreen, makeToast, createMemory } from './player-memory.mjs';
 import { SegmentPrefetcher, bufferingSettings } from './prefetch.mjs';
 import { createPrefetchLoader } from './hls-prefetch.mjs';
@@ -33,6 +33,8 @@ async function readSettings() {
 const isMobile = () => /Android|Mobile/i.test(navigator.userAgent) || matchMedia('(pointer: coarse)').matches;
 
 const videoUrl = getVideoUrl(window.location);
+// Quality picked in the stream list (master opened because that variant has separate audio)
+const pageHeight = getPreferredHeight(window.location);
 const title = getTitle(window.location);
 const subtitles = getSubtitleList(window.location);
 const errorEl = document.getElementById('error-message');
@@ -266,7 +268,7 @@ async function main() {
         window._hls = hls;
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           // One quality when downloading the whole video (or when one was chosen before)
-          const preferred = memory.preferredHeight();
+          const preferred = pageHeight || memory.preferredHeight();
           if (hls.levels.length > 1 && (cache || preferred)) {
             const index = pickLevelIndex(hls.levels, desiredHeight(preferred));
             if (index >= 0) {
@@ -320,7 +322,7 @@ async function main() {
           errorEl.textContent = `Failed to load: ${e.message || e.code || e}`;
           return;
         }
-        const preferred = memory.preferredHeight();
+        const preferred = pageHeight || memory.preferredHeight();
         if (cache || preferred) {
           const pick = pickVariant(sp.getVariantTracks().filter(t => t.height), desiredHeight(preferred));
           sp.configure({ abr: { enabled: false } });

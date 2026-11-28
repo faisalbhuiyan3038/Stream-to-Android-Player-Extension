@@ -439,6 +439,48 @@ test('selecting a quality variant changes the URL that is copied', async () => {
   await page.close();
 });
 
+// Sites like cinejoy/catflix: the sound is in a separate audio playlist. The page requests the
+// master, a video-only variant and the audio playlist; only the master may be listed, and a
+// quality picked in the list must still play (and copy) the master, starting at that quality.
+test('separate audio: only the master is listed; a picked quality opens the master with vh and plays with sound', async () => {
+  await setSettings({ webPlayerEngine: 'artplayer', cacheWholeVideo: false });
+  const page = await openSite('/p/sep-audio');
+  const items = await until(async () => { const r = await readItems(page); return r.length && r[0].variants.length ? r : null; });
+  assert.ok(items, 'variants never arrived');
+  await sleep(1500); // the variant and audio playlists were requested after the master
+  const listed = await readItems(page);
+  assert.deepEqual(listed.map(i => i.url), [`${ORIGIN}/sep-audio/master.m3u8`], JSON.stringify(listed));
+  assert.deepEqual(listed[0].variants, ['Auto', '720p', '360p']);
+
+  await page.click('#video-handler-button');
+  await page.selectOption('.v-quality', { label: '360p' });
+  await page.click('.v-action-copy');
+  await sleep(300);
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), `${ORIGIN}/sep-audio/master.m3u8`);
+
+  const [player] = await Promise.all([ctx.waitForEvent('page'), page.click('.v-action-play')]);
+  await until(() => player.url().includes('player-art.html'));
+  const params = new URL(player.url()).searchParams;
+  assert.equal(params.get('url'), `${ORIGIN}/sep-audio/master.m3u8`);
+  assert.equal(params.get('vh'), '360');
+  const state = await until(() => player.evaluate(() => {
+    const hls = window._hls;
+    const video = document.querySelector('video');
+    if (!hls || !video) return null;
+    if (video.paused) video.play().catch(() => {}); // the page does not autoplay
+    if (video.currentTime < 1.5) return null;
+    const level = hls.levels[hls.currentLevel];
+    return { height: level && level.height, audioTracks: hls.audioTracks.length, audioBytes: video.webkitAudioDecodedByteCount };
+  }).catch(() => null), { timeout: 20000 });
+  assert.ok(state, 'the player never played');
+  assert.equal(state.height, 360);
+  assert.ok(state.audioTracks >= 1, 'no audio track');
+  assert.ok(state.audioBytes > 0, 'no audio decoded');
+  await player.close();
+  await page.close();
+  await setSettings({ webPlayerEngine: 'vidstack', cacheWholeVideo: true });
+});
+
 // ── phase 1: detection signals, patterns, titles ────────────────────────────
 
 const readSubtitles = page => page.$$eval('.stream-item .stream-subtitle', els => els.map(e => e.textContent));

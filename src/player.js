@@ -5,7 +5,7 @@ import 'vidstack/define/media-community-skin.js';
 import { isHLSProvider } from 'vidstack';
 import Hls from 'hls.js';
 import { loadSubtitleAsVtt } from './subtitles.mjs';
-import { getVideoUrl, getSubtitleList, getTitle } from './page-params.mjs';
+import { getVideoUrl, getSubtitleList, getTitle, getPreferredHeight } from './page-params.mjs';
 import { attachPlaybackMemory, lockOrientationOnFullscreen, makeToast, createMemory } from './player-memory.mjs';
 import { SegmentPrefetcher, bufferingSettings } from './prefetch.mjs';
 import { createPrefetchLoader } from './hls-prefetch.mjs';
@@ -30,6 +30,8 @@ async function readSettings() {
 const isMobile = () => /Android|Mobile/i.test(navigator.userAgent) || matchMedia('(pointer: coarse)').matches;
 
 const videoUrl = getVideoUrl(window.location);
+// Quality picked in the stream list (master opened because that variant has separate audio)
+const pageHeight = getPreferredHeight(window.location);
 const errorEl = document.getElementById('error-message');
 const player = document.querySelector('media-player');
 const toast = makeToast(document.getElementById('toast'));
@@ -126,7 +128,7 @@ async function start() {
     window._hls = instance;
     instance.on(Hls.Events.MANIFEST_PARSED, () => {
       if (instance.levels.length < 2) return;
-      const index = pickLevelIndex(instance.levels, desiredHeight(memory.preferredHeight()));
+      const index = pickLevelIndex(instance.levels, desiredHeight(pageHeight || memory.preferredHeight()));
       if (index >= 0) {
         instance.startLevel = index;
         instance.currentLevel = index;
@@ -160,6 +162,19 @@ async function start() {
           fLoader: createPrefetchLoader(Hls.DefaultConfig.loader, () => hlsProvider && hlsProvider.instance, prefetcher, { aheadSeconds: buffering.bufferAhead }),
           ...depth
         };
+      }
+      // Without the cache: start at the quality picked in the stream list, if any
+      if (!cache && pageHeight) {
+        provider.onInstance((instance) => {
+          instance.on(Hls.Events.MANIFEST_PARSED, () => {
+            if (instance.levels.length < 2) return;
+            const index = pickLevelIndex(instance.levels, pageHeight);
+            if (index >= 0) {
+              instance.startLevel = index;
+              instance.currentLevel = index;
+            }
+          });
+        });
       }
     }
   });

@@ -420,8 +420,17 @@
     return { lang: code, label: outLabel };
   }
 
+  // The URL an action should use for `url` (a stream's own URL, or a variant picked in its quality
+  // selector) of `stream`. A variant whose sound is in a separate audio playlist plays silently on
+  // its own, so the master is used and the chosen variant comes back as a preference.
+  function resolveActionUrl(url, stream) {
+    const variant = stream && url !== stream.url && (stream.variants || []).find(v => v.url === url);
+    if (!variant || !variant.separateAudio) return { url, height: 0, bandwidth: 0 };
+    return { url: stream.url, height: variant.height || 0, bandwidth: variant.bandwidth || 0 };
+  }
+
   root.StreamShared = {
-    ANDROID_PLAYERS, formatDuration, buildAndroidIntent, launchAndroidIntent, shareToAndroid,
+    ANDROID_PLAYERS, formatDuration, buildAndroidIntent, launchAndroidIntent, shareToAndroid, resolveActionUrl,
     parseDomainRule, matchesDomainRule, matchesDomainList, validateDomainList,
     parseCustomPatterns, compileCustomPatterns, matchCustomPattern,
     cleanPageTitle, levenshtein,

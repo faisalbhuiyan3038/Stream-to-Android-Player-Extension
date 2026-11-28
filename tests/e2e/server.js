@@ -162,6 +162,22 @@ low.m3u8
 high.m3u8
 `);
     }
+    // Like cinejoy/catflix: the sound is only in a separate audio playlist, the variants are
+    // video only; the page's player requests the master, one variant and the audio playlist
+    if (url === '/sep-audio/master.m3u8') {
+      return m3u8(`#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",LANGUAGE="en",DEFAULT=YES,AUTOSELECT=YES,URI="${ORIGIN}/hls-real/audio.m3u8"
+#EXT-X-STREAM-INF:BANDWIDTH=300000,RESOLUTION=640x360,CODECS="avc1.42e01e,mp4a.40.2",AUDIO="aud"
+${ORIGIN}/multi-hls/low.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=1280x720,CODECS="avc1.42e01e,mp4a.40.2",AUDIO="aud"
+${ORIGIN}/multi-hls/high.m3u8
+`);
+    }
+    if (url === '/p/sep-audio') {
+      return html('Sep Audio Movie', `<script>fetch('/sep-audio/master.m3u8')
+        .then(() => Promise.all([fetch('/multi-hls/high.m3u8'), fetch('/hls-real/audio.m3u8')]))</script>`);
+    }
     const multiMatch = /^\/multi-hls\/(low|high)\.m3u8$/.exec(url);
     if (multiMatch) {
       const src = fs.readFileSync(path.join(__dirname, 'fixtures', 'hls', 'index.m3u8'), 'utf8');

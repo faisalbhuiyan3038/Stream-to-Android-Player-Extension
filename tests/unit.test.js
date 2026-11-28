@@ -11,13 +11,16 @@ const vm = require('vm');
 
 const root = path.resolve(__dirname, '..');
 
-function loadBackground() {
+// `storage` replaces the stub storage areas (e.g. to record writes); `incognito` runs it as the
+// incognito instance of Chromium's split mode
+function loadBackground({ storage, incognito = false } = {}) {
   const stub = () => new Proxy(function () {}, {
     get: (target, prop) => (Object.prototype.hasOwnProperty.call(target, prop) ? target[prop] : (prop === 'then' ? undefined : stub())),
     apply: () => stub()
   });
   const browser = stub();
-  browser.storage = { local: { get: () => Promise.resolve({}), set: () => Promise.resolve(), remove: () => Promise.resolve() }, onChanged: stub() };
+  browser.storage = storage || { local: { get: () => Promise.resolve({}), set: () => Promise.resolve(), remove: () => Promise.resolve() }, onChanged: stub() };
+  browser.extension = { inIncognitoContext: incognito };
   browser.runtime = { id: 'test', onStartup: stub(), onMessage: stub(), onInstalled: stub(), getPlatformInfo: () => Promise.resolve({ os: 'win' }), getURL: p => p };
   browser.contextMenus = undefined;
   browser.commands = undefined;
@@ -49,6 +52,57 @@ test('parseM3u8: master playlist yields variants', () => {
   assert.equal(p.variants[0].codecs, 'avc1.4d401e,mp4a.40.2');
   assert.equal(p.variants[1].url, 'https://cdn.example/abs/hi.m3u8');
   assert.equal(p.variants[1].bandwidth, 5000000);
+});
+
+test('parseM3u8: separate audio renditions and the variants that use them', () => {
+  const text = [
+    '#EXTM3U',
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",LANGUAGE="en",DEFAULT=YES,URI="audio/en.m3u8"',
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="muxed",NAME="Main",DEFAULT=YES',
+    '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English",URI="subs/en.m3u8"',
+    '#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360,AUDIO="aud",SUBTITLES="subs"', 'v360/index.m3u8',
+    '#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1280x720,AUDIO="muxed"', 'v720/index.m3u8'
+  ].join('\n');
+  const p = bg.parseM3u8(text, 'https://cdn.example/v/master.m3u8');
+  assert.equal(p.isMaster, true);
+  assert.equal(p.renditions.length, 2); // the one without a URI is muxed into the variants
+  deepEqual({ ...p.renditions[0] }, { type: 'AUDIO', groupId: 'aud', url: 'https://cdn.example/v/audio/en.m3u8', language: 'en', name: 'English' });
+  assert.equal(p.renditions[1].type, 'SUBTITLES');
+  assert.equal(p.variants[0].audioGroup, 'aud');
+  assert.equal(p.variants[1].audioGroup, 'muxed');
+});
+
+test('analyzeStream: a master with separate audio hides its child playlists and marks such variants', async () => {
+  const master = [
+    '#EXTM3U',
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",URI="a/en.m3u8"',
+    '#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360,AUDIO="aud"', 'v360.m3u8',
+    '#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1280x720,AUDIO="aud"', 'v720.m3u8'
+  ].join('\n');
+  const media = '#EXTM3U\n#EXTINF:6,\ns0.ts\n#EXTINF:6,\ns1.ts\n#EXT-X-ENDLIST';
+  const ctx = loadBackground();
+  ctx.fetch = url => Promise.resolve({ ok: true, text: () => Promise.resolve(url.endsWith('master.m3u8') ? master : media) });
+  const base = 'https://cdn.example/x/';
+  vm.runInContext(`detectedStreams.set(7, [
+    { url: '${base}v720.m3u8', type: 'm3u8' },
+    { url: '${base}a/en.m3u8', type: 'm3u8' },
+    { url: '${base}master.m3u8', type: 'm3u8' },
+    { url: 'https://other.example/x.m3u8', type: 'm3u8' }
+  ]);`, ctx);
+  assert.equal(await ctx.analyzeStream(7, `${base}master.m3u8`, 'm3u8'), true);
+  const list = vm.runInContext('detectedStreams.get(7)', ctx);
+  deepEqual(list.map(s => s.url).slice(), [`${base}master.m3u8`, 'https://other.example/x.m3u8']);
+  const stream = list[0];
+  assert.equal(stream.separateAudio, true);
+  assert.equal(stream.duration, 12);
+  assert.equal(stream.variants[0].separateAudio, true);
+
+  // A quality picked in the list → the master (it has the sound) + that quality as a preference
+  deepEqual({ ...ctx.StreamShared.resolveActionUrl(`${base}v360.m3u8`, stream) }, { url: `${base}master.m3u8`, height: 360, bandwidth: 800000 });
+  deepEqual({ ...ctx.StreamShared.resolveActionUrl(`${base}master.m3u8`, stream) }, { url: `${base}master.m3u8`, height: 0, bandwidth: 0 });
+  // Muxed-audio variants keep their own URL
+  const muxed = { url: 'm', variants: [{ url: 'v', height: 720, bandwidth: 1 }] };
+  deepEqual({ ...ctx.StreamShared.resolveActionUrl('v', muxed) }, { url: 'v', height: 0, bandwidth: 0 });
 });
 
 test('parseM3u8: media playlist sums EXTINF and finds the segment directory', () => {
@@ -115,6 +169,10 @@ test('buildNativeCommand picks the preset from the executable name', () => {
   const mpv = bg.buildNativeCommand(ctx);
   assert.equal(mpv[0], 'C:\\Program Files\\mpv\\mpv.exe');
   deepEqual(mpv.slice(1).slice(), ['--referrer=http://page/', '--user-agent=UA', '--force-media-title=Title', '--sub-file=http://s/en.vtt', 'http://u/v.m3u8']);
+  // Origin is sent too (CDNs that check it refuse mpv otherwise); a quality picked in the list
+  // on a master with separate audio arrives as the master URL + its bandwidth
+  const withOrigin = bg.buildNativeCommand({ ...ctx, origin: 'http://page', bandwidth: 2500000, subtitles: [] });
+  deepEqual(withOrigin.slice(1).slice(), ['--referrer=http://page/', '--user-agent=UA', '--http-header-fields-append=Origin: http://page', '--hls-bitrate=2500000', '--force-media-title=Title', 'http://u/v.m3u8']);
 
   run(`settings.externalPlayerPath = '"C:\\\\VLC\\\\vlc.exe"';`);
   const vlc = bg.buildNativeCommand({ ...ctx, subtitles: [] });
@@ -129,7 +187,8 @@ test('buildNativeCommand picks the preset from the executable name', () => {
 
   run(`settings.nativeArgsTemplate = '';`);
   const withCookie = bg.buildNativeCommand({ ...ctx, cookie: 'a=b' });
-  assert.ok(withCookie.includes('--http-header-fields=Cookie: a=b'));
+  // -append: one header, not split at the commas a cookie can contain
+  assert.ok(withCookie.includes('--http-header-fields-append=Cookie: a=b'));
 });
 
 test('shouldSkipUrl / isStreamUrl keep .ts as a stream pattern', () => {
@@ -405,3 +464,32 @@ test('cleanPageTitle: non-Latin titles are kept, URL-like or empty titles give n
   assert.equal(t('KissKH', 'kisskh.co'), '');
 });
 
+test('Chromium manifest uses split incognito mode (our pages can open in incognito tabs); Firefox has none', () => {
+  const read = f => JSON.parse(fs.readFileSync(path.join(root, f), 'utf8'));
+  assert.equal(read('manifest.chrome.json').incognito, 'split');
+  assert.equal(read('manifest.firefox.json').incognito, undefined);
+});
+
+test('split mode: the incognito instance keeps detected streams in storage.session under its own keys', async () => {
+  const area = () => {
+    const writes = [];
+    return { writes, get: () => Promise.resolve({}), set: (o) => { writes.push(Object.keys(o)); return Promise.resolve(); }, remove: () => Promise.resolve() };
+  };
+  const save = async (incognito) => {
+    const local = area();
+    const session = area();
+    const onChanged = { addListener() {} };
+    const ctx = loadBackground({ incognito, storage: { local, session, onChanged } });
+    await new Promise(r => setTimeout(r, 0));
+    local.writes.length = 0;
+    session.writes.length = 0;
+    vm.runInContext('detectedStreams.set(5, [{ url: "https://cdn.example/a.m3u8" }]); saveStreams();', ctx);
+    return { local: local.writes.flat(), session: session.writes.flat() };
+  };
+  const incog = await save(true);
+  assert.deepEqual(incog.local, [], 'incognito streams written to storage.local (disk, shared with the normal instance)');
+  assert.deepEqual(incog.session.sort(), ['detectedStreams:incognito', 'detectedSubtitles:incognito']);
+  const normal = await save(false);
+  assert.deepEqual(normal.local.sort(), ['detectedStreams', 'detectedSubtitles']);
+  assert.deepEqual(normal.session, []);
+});
